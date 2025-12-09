@@ -1,4 +1,4 @@
-name: "Image Preprocessor"
+name: "Git Image Preprocessor"
 description: "Automatically compress and optimize images in commits and pull requests"
 author: "hnrobert"
 

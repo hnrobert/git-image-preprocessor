@@ -15,7 +15,7 @@ FILE_PATTERNS=${10}
 SKIP_CI=${11}
 REMOVE_EXIF=${12}
 
-echo "🖼️ Image Preprocessor Action"
+echo "🖼️ Git Image Preprocessor Action"
 echo "=========================="
 echo "Quality: $QUALITY"
 echo "PNG Quality: $PNG_QUALITY"
