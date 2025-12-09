@@ -24,7 +24,7 @@ jobs:
 
       - name: Optimize Images (WebP Conversion)
         if: github.event.inputs.convert-to-webp == 'true'
-        uses: hnrobert/git-image-preprocessor@v0.0.2
+        uses: hnrobert/git-image-preprocessor@v0.0.3
         with:
           quality: ${{ github.event.inputs.quality }}
           png-quality: 65-80
@@ -37,7 +37,7 @@ jobs:
 
       - name: Optimize Images (Standard)
         if: github.event.inputs.convert-to-webp != 'true'
-        uses: hnrobert/git-image-preprocessor@v0.0.2
+        uses: hnrobert/git-image-preprocessor@v0.0.3
         with:
           quality: ${{ github.event.inputs.quality }}
           png-quality: 65-80
