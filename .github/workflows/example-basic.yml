@@ -1,0 +1,39 @@
+name: Example - Optimize Images on Push
+
+on:
+  push:
+    paths:
+      - "**.jpg"
+      - "**.jpeg"
+      - "**.png"
+      - "**.webp"
+
+jobs:
+  optimize-images:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Optimize Images
+        id: optimize
+        uses: hnrobert/git-image-preprocessor@v1
+        with:
+          quality: 85
+          png-quality: 65-80
+          webp-quality: 85
+          max-width: 0
+          max-height: 0
+          convert-to-webp: false
+          remove-exif: true # Remove EXIF metadata, enabled by default
+          commit-message: "🖼️ Optimize images"
+
+      - name: Show optimization results
+        run: |
+          echo "✅ Optimization complete!"
+          echo "📊 Images optimized: ${{ steps.optimize.outputs.optimized-count }}"
+          echo "💾 Total saved: ${{ steps.optimize.outputs.total-saved }} bytes"
+          echo "📁 Files changed: ${{ steps.optimize.outputs.files-changed }}"

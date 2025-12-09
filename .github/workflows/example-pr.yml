@@ -1,0 +1,51 @@
+name: Example - Optimize PR Images
+
+on:
+  pull_request:
+    paths:
+      - "**.jpg"
+      - "**.jpeg"
+      - "**.png"
+      - "**.webp"
+
+jobs:
+  optimize-pr-images:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout PR
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+
+      - name: Optimize Images
+        id: optimize
+        uses: hnrobert/git-image-preprocessor@v1
+        with:
+          quality: 80
+          png-quality: 60-75
+          max-width: 2000
+          max-height: 2000
+          remove-exif: true # Remove EXIF metadata, enabled by default
+          commit-message: "🖼️ Auto-optimize images in PR"
+
+      - name: Push changes
+        if: steps.optimize.outputs.optimized-count > 0
+        run: |
+          git push
+
+      - name: Comment on PR
+        if: steps.optimize.outputs.optimized-count > 0
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## 🖼️ Image Optimization Results\n\n✅ Optimized **${{ steps.optimize.outputs.optimized-count }}** images\n💾 Saved **${{ steps.optimize.outputs.total-saved }}** bytes\n\n**Files changed:**\n${{ steps.optimize.outputs.files-changed }}`
+            })

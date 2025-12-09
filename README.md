@@ -1,2 +1,235 @@
-# git-image-preprocessor
-GitHub Action that compress image flexibly and remove EXIF info automatically after committing / on pr
+# Git Image Preprocessor
+
+[![GitHub Marketplace](https://img.shields.io/badge/Marketplace-Image%20Preprocessor-blue.svg?colorA=24292e&colorB=0366d6&style=flat&longCache=true&logo=github)](https://github.com/marketplace/actions/image-preprocessor)
+[![License](https://img.shields.io/github/license/hnrobert/git-image-preprocessor)](https://github.com/hnrobert/git-image-preprocessor/blob/main/LICENSE)
+
+自动压缩和优化 Git 仓库中的图片文件，支持 JPEG、PNG 和 WebP 格式。可以作为 GitHub Action 在 commit 和 PR 中自动运行。
+
+## 特性
+
+- **自动优化**：自动检测并优化仓库中的图片
+- **可配置压缩质量**：支持自定义 JPEG、PNG、WebP 的压缩质量
+- **尺寸调整**：可选的图片尺寸限制
+- **格式转换**：可选择转换为 WebP 格式以获得更好的压缩率
+- **隐私保护**：默认去除 EXIF 元数据信息（位置、设备等）
+- **详细报告**：输出优化统计信息
+- **即插即用**：易于集成到现有的 GitHub 工作流
+
+## 🚀 快速开始
+
+### 基础用法
+
+在你的仓库中创建 `.github/workflows/image-optimization.yml`：
+
+```yaml
+name: Optimize Images
+
+on:
+  push:
+    paths:
+      - '**.jpg'
+      - '**.jpeg'
+      - '**.png'
+      - '**.webp'
+
+jobs:
+  optimize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Optimize Images
+        uses: hnrobert/git-image-preprocessor@v1
+        with:
+          quality: 85
+          png-quality: 65-80
+```
+
+### PR 自动优化
+
+```yaml
+name: Optimize PR Images
+
+on:
+  pull_request:
+    paths:
+      - '**.jpg'
+      - '**.jpeg'
+      - '**.png'
+      - '**.webp'
+
+jobs:
+  optimize:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+
+      - name: Optimize Images
+        uses: hnrobert/git-image-preprocessor@v1
+        with:
+          quality: 80
+          png-quality: 60-75
+          max-width: 2000
+          max-height: 2000
+          commit-message: '🖼️ Auto-optimize images in PR'
+
+      - name: Push changes
+        run: git push
+```
+
+## ⚙️ 配置选项
+
+| 参数              | 描述                       | 默认值                                         | 示例              |
+| ----------------- | -------------------------- | ---------------------------------------------- | ----------------- |
+| `quality`         | JPEG/默认压缩质量 (1-100)  | `85`                                           | `80`              |
+| `png-quality`     | PNG 压缩质量范围 (0-100)   | `65-80`                                        | `60-75`           |
+| `webp-quality`    | WebP 压缩质量 (1-100)      | `85`                                           | `80`              |
+| `max-width`       | 最大宽度（像素，0=不限制） | `0`                                            | `2000`            |
+| `max-height`      | 最大高度（像素，0=不限制） | `0`                                            | `2000`            |
+| `convert-to-webp` | 转换为 WebP 格式           | `false`                                        | `true`            |
+| `remove-exif`     | 去除 EXIF 元数据           | `true`                                         | `false`           |
+| `git-user-name`   | Git 提交用户名             | `github-actions[bot]`                          | `my-bot`          |
+| `git-user-email`  | Git 提交邮箱               | `github-actions[bot]@users.noreply.github.com` | `bot@example.com` |
+| `commit-message`  | 提交信息                   | `🖼️ Optimize images`                           | `优化图片`        |
+| `file-patterns`   | 文件匹配模式               | `*.jpg *.jpeg *.png *.webp`                    | `*.png *.jpg`     |
+| `skip-ci`         | 添加 [skip ci] 到提交信息  | `false`                                        | `true`            |
+
+## 📤 输出
+
+| 输出              | 描述             |
+| ----------------- | ---------------- |
+| `optimized-count` | 优化的图片数量   |
+| `total-saved`     | 总共节省的字节数 |
+| `files-changed`   | 修改的文件列表   |
+
+### 使用输出示例
+
+```yaml
+- name: Optimize Images
+  id: optimize
+  uses: hnrobert/git-image-preprocessor@v1
+  with:
+    quality: 85
+
+- name: Show Results
+  run: |
+    echo "Optimized ${{ steps.optimize.outputs.optimized-count }} images"
+    echo "Saved ${{ steps.optimize.outputs.total-saved }} bytes"
+```
+
+## 📝 使用场景
+
+### 1. 自动优化所有提交的图片
+
+```yaml
+name: Auto Optimize Images
+
+on:
+  push:
+    branches: [main, develop]
+
+jobs:
+  optimize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hnrobert/git-image-preprocessor@v1
+```
+
+### 2. 高质量压缩
+
+```yaml
+- uses: hnrobert/git-image-preprocessor@v1
+  with:
+    quality: 95
+    png-quality: 90-95
+    webp-quality: 95
+```
+
+### 3. 激进压缩（更小的文件）
+
+```yaml
+- uses: hnrobert/git-image-preprocessor@v1
+  with:
+    quality: 70
+    png-quality: 50-60
+    webp-quality: 70
+    max-width: 1920
+    max-height: 1080
+```
+
+### 4. 转换为 WebP 格式
+
+```yaml
+- uses: hnrobert/git-image-preprocessor@v1
+  with:
+    convert-to-webp: true
+    webp-quality: 85
+```
+
+### 5. 限制图片尺寸
+
+```yaml
+- uses: hnrobert/git-image-preprocessor@v1
+  with:
+    max-width: 2048
+    max-height: 2048
+```
+
+### 6. 自定义提交信息
+
+```yaml
+- uses: hnrobert/git-image-preprocessor@v1
+  with:
+    commit-message: 'chore: optimize images [skip ci]'
+    git-user-name: 'Image Bot'
+    git-user-email: 'bot@myproject.com'
+```
+
+### 7. 保留 EXIF 信息
+
+如果需要保留照片的 EXIF 元数据（如拍摄日期、相机信息等）：
+
+```yaml
+- uses: hnrobert/git-image-preprocessor@v1
+  with:
+    remove-exif: false
+```
+
+> **注意**：默认情况下会去除 EXIF 信息以保护隐私和减小文件大小。EXIF 可能包含位置、设备等敏感信息。
+
+## 🔧 支持的图片格式
+
+- **JPEG/JPG**：使用 ImageMagick 优化，默认去除 EXIF
+- **PNG**：使用 pngquant + optipng 优化，默认去除 EXIF
+- **WebP**：使用 ImageMagick 优化，默认去除 EXIF
+
+## 📋 权限要求
+
+在 PR 中使用时，需要授予 `contents: write` 权限：
+
+```yaml
+jobs:
+  optimize:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+```
+
+## 🤝 贡献
+
+欢迎提交 Issue 和 Pull Request！
+
+## 📄 许可证
+
+[MIT License](LICENSE)
+
+## 🔗 相关链接
+
+- [GitHub Marketplace](https://github.com/marketplace/actions/image-preprocessor)
+- [源代码仓库](https://github.com/hnrobert/git-image-preprocessor)
+- [问题反馈](https://github.com/hnrobert/git-image-preprocessor/issues)

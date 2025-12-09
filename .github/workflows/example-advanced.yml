@@ -1,0 +1,48 @@
+name: Example - Advanced Configuration
+
+on:
+  workflow_dispatch:
+    inputs:
+      quality:
+        description: "JPEG quality (1-100)"
+        required: false
+        default: "85"
+      convert-to-webp:
+        description: "Convert to WebP"
+        required: false
+        default: "false"
+
+jobs:
+  optimize-advanced:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Optimize Images (WebP Conversion)
+        if: github.event.inputs.convert-to-webp == 'true'
+        uses: hnrobert/git-image-preprocessor@v1
+        with:
+          quality: ${{ github.event.inputs.quality }}
+          png-quality: 65-80
+          webp-quality: ${{ github.event.inputs.quality }}
+          convert-to-webp: true
+          max-width: 1920
+          max-height: 1080
+          commit-message: "🖼️ Optimize and convert images to WebP"
+          skip-ci: false
+
+      - name: Optimize Images (Standard)
+        if: github.event.inputs.convert-to-webp != 'true'
+        uses: hnrobert/git-image-preprocessor@v1
+        with:
+          quality: ${{ github.event.inputs.quality }}
+          png-quality: 65-80
+          webp-quality: 85
+          max-width: 2048
+          max-height: 2048
+          commit-message: "🖼️ Optimize images"
+          file-patterns: "*.jpg *.jpeg *.png"

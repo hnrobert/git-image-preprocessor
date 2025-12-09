@@ -1,0 +1,95 @@
+name: "Image Preprocessor"
+description: "Automatically compress and optimize images in commits and pull requests"
+author: "hnrobert"
+
+branding:
+  icon: "image"
+  color: "blue"
+
+inputs:
+  quality:
+    description: "Compression quality for JPEG/WebP (1-100, default: 85)"
+    required: false
+    default: "85"
+
+  png-quality:
+    description: "PNG compression quality range (0-100, default: 65-80)"
+    required: false
+    default: "65-80"
+
+  webp-quality:
+    description: "WebP compression quality (1-100, default: 85)"
+    required: false
+    default: "85"
+
+  max-width:
+    description: "Maximum width in pixels (0 = no limit, default: 0)"
+    required: false
+    default: "0"
+
+  max-height:
+    description: "Maximum height in pixels (0 = no limit, default: 0)"
+    required: false
+    default: "0"
+
+  convert-to-webp:
+    description: "Convert PNG/JPEG to WebP format (true/false, default: false)"
+    required: false
+    default: "false"
+
+  git-user-name:
+    description: "Git user name for commits (default: github-actions[bot])"
+    required: false
+    default: "github-actions[bot]"
+
+  git-user-email:
+    description: "Git user email for commits (default: github-actions[bot]@users.noreply.github.com)"
+    required: false
+    default: "github-actions[bot]@users.noreply.github.com"
+
+  commit-message:
+    description: 'Commit message for optimized images (default: "🖼️ Optimize images")'
+    required: false
+    default: "🖼️ Optimize images"
+
+  file-patterns:
+    description: 'File patterns to process (default: "*.jpg *.jpeg *.png *.webp")'
+    required: false
+    default: "*.jpg *.jpeg *.png *.webp"
+
+  skip-ci:
+    description: "Add [skip ci] to commit message (true/false, default: false)"
+    required: false
+    default: "false"
+
+  remove-exif:
+    description: "Remove EXIF metadata from images (true/false, default: true)"
+    required: false
+    default: "true"
+
+outputs:
+  optimized-count:
+    description: "Number of images optimized"
+
+  total-saved:
+    description: "Total bytes saved"
+
+  files-changed:
+    description: "List of changed files"
+
+runs:
+  using: "docker"
+  image: "Dockerfile"
+  args:
+    - ${{ inputs.quality }}
+    - ${{ inputs.png-quality }}
+    - ${{ inputs.webp-quality }}
+    - ${{ inputs.max-width }}
+    - ${{ inputs.max-height }}
+    - ${{ inputs.convert-to-webp }}
+    - ${{ inputs.git-user-name }}
+    - ${{ inputs.git-user-email }}
+    - ${{ inputs.commit-message }}
+    - ${{ inputs.file-patterns }}
+    - ${{ inputs.skip-ci }}
+    - ${{ inputs.remove-exif }}
