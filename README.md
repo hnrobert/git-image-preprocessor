@@ -1,6 +1,6 @@
-# Git Git Image Preprocessor
+# Git Image Preprocessor
 
-[![GitHub Marketplace](https://img.shields.io/badge/Marketplace-Image%20Preprocessor-blue.svg?colorA=24292e&colorB=0366d6&style=flat&longCache=true&logo=github)](https://github.com/marketplace/actions/git-image-preprocessor)
+[![GitHub Marketplace](https://img.shields.io/badge/Marketplace-Git%20Image%20Preprocessor-blue.svg?colorA=24292e&colorB=0366d6&style=flat&longCache=true&logo=github)](https://github.com/marketplace/actions/git-image-preprocessor)
 [![License](https://img.shields.io/github/license/hnrobert/git-image-preprocessor)](https://github.com/hnrobert/git-image-preprocessor/blob/main/LICENSE)
 
 自动压缩和优化 Git 仓库中的图片文件，支持 JPEG、PNG 和 WebP 格式。可以作为 GitHub Action 在 commit 和 PR 中自动运行。

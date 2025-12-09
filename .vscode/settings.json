@@ -1,0 +1,13 @@
+{
+    "cSpell.words": [
+        "color",
+        "jpegoptim",
+        "noninteractive",
+        "optipng",
+        "pngquant",
+        "webp"
+    ],
+    "markdownlint.config": {
+        "first-line-heading": false
+    }
+}
