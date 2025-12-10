@@ -60,6 +60,8 @@ jobs:
         uses: docker/build-push-action@v4
         if: steps.imageTags.outputs.tags != ''
         with:
+          provenance: false # Disable provenance to avoid unknown/unknown
+          sbom: false # Disable sbom to avoid unknown/unknown
           context: .
           push: true
           tags: ${{ steps.imageTags.outputs.tags }}

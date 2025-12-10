@@ -12,6 +12,7 @@
         "libwebp",
         "minq",
         "noninteractive",
+        "oneline",
         "optipng",
         "PNGQ",
         "pngquant",
