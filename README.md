@@ -91,20 +91,20 @@ jobs:
 
 ## ⚙️ 配置选项
 
-| 参数             | 描述                                                                                  | 默认值                                         | 示例              |
-| ---------------- | ------------------------------------------------------------------------------------- | ---------------------------------------------- | ----------------- |
-| `quality`        | JPEG/WebP 压缩质量 (1-100)                                                            | `85`                                           | `80`              |
-| `max-width`      | 最大宽度（像素，0=不限制）                                                            | `0`                                            | `2000`            |
-| `max-height`     | 最大高度（像素，0=不限制）                                                            | `0`                                            | `2000`            |
-| `convert-to`     | 转换目标格式 (jpg/png/webp)                                                           | `""`                                           | `webp`            |
-| `max-size-kb`    | 目标图片大小上限（KB），若为 `0` 则禁用大小限制                                       | `0`                                            | `200`             |
-| `remove-exif`    | 去除 EXIF 元数据                                                                      | `true`                                         | `false`           |
-| `git-user-name`  | Git 提交用户名                                                                        | `github-actions[bot]`                          | `my-bot`          |
-| `git-user-email` | Git 提交邮箱                                                                          | `github-actions[bot]@users.noreply.github.com` | `bot@example.com` |
-| `commit-message` | 提交信息                                                                              | `🖼️ Optimize images`                           | `优化图片`        |
-| `file-patterns`  | 文件匹配模式                                                                          | `*.jpg *.jpeg *.png *.webp`                    | `*.png *.jpg`     |
-| `skip-ci`        | 添加 [skip ci] 到提交信息                                                             | `false`                                        | `true`            |
-| `convert-to`     | 将 HEIC/AVIF/TIFF/BMP/GIF 等非标准格式转换到指定目标 (jpg/png/webp)。如果为空则不转换 | `""`                                           | `webp`            |
+| 参数             | 描述                                                                                                            | 默认值                                         | 示例              |
+| ---------------- | --------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- | ----------------- |
+| `quality`        | JPEG/WebP 压缩质量 (1-100)                                                                                      | `85`                                           | `80`              |
+| `max-width`      | 最大宽度（像素，0=不限制）                                                                                      | `0`                                            | `2000`            |
+| `max-height`     | 最大高度（像素，0=不限制）                                                                                      | `0`                                            | `2000`            |
+| `convert-to`     | 转换目标格式 (jpg/png/webp)                                                                                     | `""`                                           | `webp`            |
+| `max-size-kb`    | 目标图片大小上限（KB），若为 `0` 则禁用大小限制                                                                 | `0`                                            | `200`             |
+| `remove-exif`    | 去除 EXIF 元数据                                                                                                | `true`                                         | `false`           |
+| `git-user-name`  | Git 提交用户名                                                                                                  | `github-actions[bot]`                          | `my-bot`          |
+| `git-user-email` | Git 提交邮箱                                                                                                    | `github-actions[bot]@users.noreply.github.com` | `bot@example.com` |
+| `commit-message` | 提交信息                                                                                                        | `🖼️ Optimize images`                           | `优化图片`        |
+| `file-patterns`  | 文件匹配模式                                                                                                    | `*.jpg *.jpeg *.png *.webp`                    | `*.png *.jpg`     |
+| `skip-ci`        | 添加 [skip ci] 到提交信息                                                                                       | `false`                                        | `true`            |
+| `convert-to`     | 将不同于目标格式的图片（例如 HEIC/AVIF/TIFF/BMP/GIF/JPG/PNG 等）转换为指定目标 (jpg/png/webp)。如果为空则不转换 | `""`                                           | `webp`            |
 
 ## 📤 输出
 
@@ -175,9 +175,11 @@ jobs:
     quality: 85
 ```
 
+（注）转换行为由 `convert-to` 决定；如果设置，脚本会将所有不在目标格式的图片转换为 `convert-to` 指定的格式（例如将 JPG/PNG -> WebP）。
+
 ### 8. 自动将 HEIC/AVIF/TIFF 等格式转换并优化
 
-如果仓库中存在 HEIC/HEIF/AVIF/TIFF/BMP/GIF 等格式，设置 `convert-to`（例如 `convert-to: webp`）可以自动将这些格式转换为目标格式并进行优化：
+如果仓库中存在不同于 `convert-to` 的图片格式（例如你设置 `convert-to: webp`），脚本会将所有非 `convert-to` 格式转换为目标格式并进行优化：
 
 ```yaml
 - uses: hnrobert/git-image-preprocessor@v1
@@ -231,7 +233,7 @@ jobs:
 - **PNG**：使用 pngquant + optipng 优化，默认去除 EXIF
 - **WebP**：使用 ImageMagick 优化，默认去除 EXIF
 
-- **HEIC/HEIF/AVIF/TIFF/BMP/GIF**：脚本可检测这些常见但不总是受支持的格式；如果 `convert-to` 非空，会自动转换为 `convert-to` 指定的目标格式（jpg/png/webp），然后再进行优化。
+- 如果 `convert-to` 非空，脚本会将所有不在目标格式的图片转换为 `convert-to` 指定的目标格式（jpg/png/webp），然后再进行优化。
 
 ## 📋 权限要求
 

@@ -1,0 +1,73 @@
+name: Build and Publish GHCR Image
+
+on:
+  release:
+    types: [published]
+  push:
+    branches:
+      - main
+      - develop
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v2
+
+      - name: Set up Docker buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Determine image tags
+        id: imageTags
+        shell: bash
+        run: |
+          echo "Event: $GITHUB_EVENT_NAME"
+          echo "Ref: $GITHUB_REF"
+          tags=""
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            if [ "$GITHUB_REF" = "refs/heads/main" ]; then
+              tags=ghcr.io/hnrobert/git-image-preprocessor:latest
+            elif [ "$GITHUB_REF" = "refs/heads/develop" ]; then
+              tags=ghcr.io/hnrobert/git-image-preprocessor:develop
+            fi
+          elif [ "$GITHUB_EVENT_NAME" = "release" ]; then
+            tag_name="${GITHUB_REF#refs/tags/}"
+            if [ -n "$tag_name" ]; then
+              tags=ghcr.io/hnrobert/git-image-preprocessor:$tag_name
+            fi
+          fi
+          if [ -n "$tags" ]; then
+            echo "tags=$tags" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build and push image
+        id: build_and_push
+        uses: docker/build-push-action@v4
+        if: steps.imageTags.outputs.tags != ''
+        with:
+          provenance: false # Disable provenance to avoid unknown/unknown
+          sbom: false # Disable sbom to avoid unknown/unknown
+          context: .
+          push: true
+          tags: ${{ steps.imageTags.outputs.tags }}
+          platforms: linux/amd64,linux/arm64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Output image reference
+        run: echo "Image pushed to ${{ steps.imageTags.outputs.tags }}"
