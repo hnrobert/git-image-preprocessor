@@ -12,16 +12,6 @@ inputs:
     required: false
     default: "85"
 
-  png-quality:
-    description: "PNG compression quality range (0-100, default: 65-80)"
-    required: false
-    default: "65-80"
-
-  webp-quality:
-    description: "WebP compression quality (1-100, default: 85)"
-    required: false
-    default: "85"
-
   max-width:
     description: "Maximum width in pixels (0 = no limit, default: 0)"
     required: false
@@ -32,10 +22,10 @@ inputs:
     required: false
     default: "0"
 
-  convert-to-webp:
-    description: "Convert PNG/JPEG to WebP format (true/false, default: false)"
+  convert-to:
+    description: "Target format to convert to when set (jpg/png/webp). If empty, conversion is disabled."
     required: false
-    default: "false"
+    default: ""
 
   git-user-name:
     description: "Git user name for commits (default: github-actions[bot])"
@@ -55,7 +45,7 @@ inputs:
   file-patterns:
     description: 'File patterns to process (default: "*.jpg *.jpeg *.png *.webp")'
     required: false
-    default: "*.jpg *.jpeg *.png *.webp"
+    default: "*.jpg *.jpeg *.png *.webp *.heic *.heif *.avif *.tiff *.bmp *.gif"
 
   skip-ci:
     description: "Add [skip ci] to commit message (true/false, default: false)"
@@ -82,14 +72,12 @@ runs:
   image: "Dockerfile"
   args:
     - ${{ inputs.quality }}
-    - ${{ inputs.png-quality }}
-    - ${{ inputs.webp-quality }}
     - ${{ inputs.max-width }}
     - ${{ inputs.max-height }}
-    - ${{ inputs.convert-to-webp }}
     - ${{ inputs.git-user-name }}
     - ${{ inputs.git-user-email }}
     - ${{ inputs.commit-message }}
     - ${{ inputs.file-patterns }}
     - ${{ inputs.skip-ci }}
     - ${{ inputs.remove-exif }}
+    - ${{ inputs.convert-to }}

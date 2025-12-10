@@ -15,6 +15,12 @@ RUN apt-get update && apt-get install -y \
     webp \
     git \
     bc \
+    libheif-examples \
+    libheif-dev \
+    libavif-bin \
+    libavif-dev \
+    libimage-exiftool-perl \
+    file \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy entrypoint script

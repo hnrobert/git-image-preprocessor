@@ -1,11 +1,22 @@
 {
     "cSpell.words": [
         "color",
+        "cwebp",
+        "exiftool",
         "jpegoptim",
+        "libavif",
+        "libheif",
+        "libimage",
+        "libwebp",
         "noninteractive",
         "optipng",
+        "PNGQ",
         "pngquant",
-        "webp"
+        "rargs",
+        "vcodec",
+        "vsync",
+        "webp",
+        "WEBPQ"
     ],
     "markdownlint.config": {
         "first-line-heading": false

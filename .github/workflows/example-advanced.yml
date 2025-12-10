@@ -7,10 +7,10 @@ on:
         description: "JPEG quality (1-100)"
         required: false
         default: "85"
-      convert-to-webp:
-        description: "Convert to WebP"
+      convert-to:
+        description: "Target format for conversion (jpg/png/webp)"
         required: false
-        default: "false"
+        default: "jpg"
 
 jobs:
   optimize-advanced:
@@ -23,25 +23,21 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Optimize Images (WebP Conversion)
-        if: github.event.inputs.convert-to-webp == 'true'
-        uses: hnrobert/git-image-preprocessor@v0.0.3
+        if: github.event.inputs.convert-to == 'webp'
+        uses: hnrobert/git-image-preprocessor@vv0.0.4
         with:
           quality: ${{ github.event.inputs.quality }}
-          png-quality: 65-80
-          webp-quality: ${{ github.event.inputs.quality }}
-          convert-to-webp: true
+          convert-to: webp
           max-width: 1920
           max-height: 1080
           commit-message: "🖼️ Optimize and convert images to WebP"
           skip-ci: false
 
       - name: Optimize Images (Standard)
-        if: github.event.inputs.convert-to-webp != 'true'
-        uses: hnrobert/git-image-preprocessor@v0.0.3
+        if: github.event.inputs.convert-to != 'webp'
+        uses: hnrobert/git-image-preprocessor@v0.0.4
         with:
           quality: ${{ github.event.inputs.quality }}
-          png-quality: 65-80
-          webp-quality: 85
           max-width: 2048
           max-height: 2048
           commit-message: "🖼️ Optimize images"

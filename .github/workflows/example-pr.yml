@@ -24,10 +24,9 @@ jobs:
 
       - name: Optimize Images
         id: optimize
-        uses: hnrobert/git-image-preprocessor@v0.0.3
+        uses: hnrobert/git-image-preprocessor@vv0.0.4
         with:
           quality: 80
-          png-quality: 60-75
           max-width: 2000
           max-height: 2000
           remove-exif: true # Remove EXIF metadata, enabled by default
