@@ -19,8 +19,6 @@ CONVERT_TO=${10:-""}
 MAX_SIZE_KB=${11:-0}
 
 echo "Git Image Preprocessor (unified convert) starting"
-echo "Q:$QUALITY MAX:${MAX_WIDTH}x${MAX_HEIGHT} CONVERT_TO:'$CONVERT_TO'"
-
 echo "QUALITY=$QUALITY"
 echo "MAX_WIDTH=$MAX_WIDTH"
 echo "MAX_HEIGHT=$MAX_HEIGHT"
@@ -326,9 +324,23 @@ process_file() {
 	ext=${ext,,}
 	local target_ext="$ext"
 
+	# Normalize extension aliases for comparison (jpeg->jpg, tif->tiff)
+	local norm_ext="$ext"
+	if [ "$norm_ext" = "jpeg" ]; then
+		norm_ext="jpg"
+	elif [ "$norm_ext" = "tif" ]; then
+		norm_ext="tiff"
+	fi
+
 	# Determine if we should convert to a different extension
-	if [ -n "$CONVERT_TO" ] && [[ "$ext" =~ ^(gif|bmp|tiff|tif|heic|heif|avif)$ ]]; then
-		target_ext="$CONVERT_TO"
+	# If convert-to is set and the image is not already the target format, convert.
+	if [ -n "$CONVERT_TO" ]; then
+		local norm_target
+		norm_target="${CONVERT_TO,,}"
+		if [ "$norm_target" = "jpeg" ]; then norm_target="jpg"; fi
+		if [ "$norm_ext" != "$norm_target" ]; then
+			target_ext="$CONVERT_TO"
+		fi
 	fi
 
 	# Re-encode using convert even when target is same type to apply quality/strip/resize
@@ -361,7 +373,10 @@ process_file() {
 			if [ -n "${LAST_TMP:-}" ] && [ "$LAST_TMP" != "$tmp_out" ]; then
 				rm -f "$LAST_TMP" || true
 			fi
-			rm -f "$f" || true
+			# If new_file differs from the original file path, remove the original
+			if [ "$new_file" != "$f" ]; then
+				rm -f "$f" || true
+			fi
 			CHANGED_FILES+=("$new_file")
 			echo "  ✅ Processed $f -> $new_file; saved $((orig_size - new_size)) bytes"
 			OPTIMIZED_COUNT=$((OPTIMIZED_COUNT + 1))
@@ -389,6 +404,12 @@ TOTAL_SAVED=0
 
 FINAL_TMP=""
 LAST_TMP=""
+
+cleanup_tmp() {
+	[ -n "${LAST_TMP:-}" ] && rm -f "$LAST_TMP" 2>/dev/null || true
+	[ -n "${FINAL_TMP:-}" ] && rm -f "$FINAL_TMP" 2>/dev/null || true
+}
+trap cleanup_tmp EXIT
 
 echo "Scanning patterns: $FILE_PATTERNS"
 for pattern in $FILE_PATTERNS; do while IFS= read -r -d '' f; do
