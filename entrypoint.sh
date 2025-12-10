@@ -133,7 +133,11 @@ build_resize_args() {
 
 ensure_max_size() {
 	# ensure_max_size <orig_src> <tmp_current> <ext> <target_bytes> <orig_quality>
-	local src="$1" tmp_current="$2" ext="$3" target_bytes="$4" orig_quality="$5"
+	local src="$1"
+	local tmp_current="$2"
+	local ext="$3"
+	local target_bytes="$4"
+	local orig_quality="$5"
 	FINAL_TMP=""
 	[ -f "$tmp_current" ] || return 1
 	local cur_size
@@ -260,7 +264,10 @@ ensure_max_size() {
 
 convert_image() {
 	# Usage: convert_image <src> <target_ext>
-	local src="$1" tgt="$2" dst="${src%.*}.${tgt}" tmp="${dst}.tmp"
+	local src="$1"
+	local tgt="$2"
+	local dst="${src%.*}.${tgt}"
+	local tmp="${dst}.tmp"
 	echo "Converting: $src -> $dst"
 
 	# Build convert command
