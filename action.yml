@@ -57,6 +57,11 @@ inputs:
     required: false
     default: "true"
 
+  max-size-kb:
+    description: "Target maximum size for converted image in KB (default 0 disables)"
+    required: false
+    default: "0"
+
 outputs:
   optimized-count:
     description: "Number of images optimized"
@@ -81,3 +86,4 @@ runs:
     - ${{ inputs.skip-ci }}
     - ${{ inputs.remove-exif }}
     - ${{ inputs.convert-to }}
+    - ${{ inputs.max-size-kb }}

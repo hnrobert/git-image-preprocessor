@@ -29,6 +29,7 @@ jobs:
           quality: 80
           max-width: 2000
           max-height: 2000
+          max-size-kb: 150
           remove-exif: true # Remove EXIF metadata, enabled by default
           commit-message: "🖼️ Auto-optimize images in PR"
 

@@ -31,6 +31,7 @@ jobs:
           max-width: 1920
           max-height: 1080
           commit-message: "🖼️ Optimize and convert images to WebP"
+          max-size-kb: 2000
           skip-ci: false
 
       - name: Optimize Images (Standard)
@@ -40,5 +41,6 @@ jobs:
           quality: ${{ github.event.inputs.quality }}
           max-width: 2048
           max-height: 2048
+          max-size-kb: 1000
           commit-message: "🖼️ Optimize images"
           file-patterns: "*.jpg *.jpeg *.png"
