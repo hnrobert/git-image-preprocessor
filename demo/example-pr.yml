@@ -25,7 +25,7 @@ jobs:
 
       - name: Optimize Images
         id: optimize
-        uses: hnrobert/git-image-preprocessor@v0.1.0
+        uses: hnrobert/git-image-preprocessor@v0.1.2
         with:
           quality: 80
           max-width: 2000
