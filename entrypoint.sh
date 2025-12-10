@@ -45,15 +45,85 @@ else
 fi
 
 build_resize_args() {
+	# build_resize_args <src>
+	# Determine which dimension exceeds its MAX proportionally more and build sequential
+	# resize args to preserve aspect ratio. The first resize will target the dimension with
+	# the larger relative overflow, followed by the other if needed.
+	local src="$1"
 	local resize_args=()
-	if [[ "$MAX_WIDTH" != "0" || "$MAX_HEIGHT" != "0" ]]; then
-		if [[ "$MAX_WIDTH" != "0" && "$MAX_HEIGHT" != "0" ]]; then
-			resize_args+=(-resize "${MAX_WIDTH}x${MAX_HEIGHT}>")
-		elif [[ "$MAX_WIDTH" != "0" ]]; then
+	# if neither max is set, no resize
+	if [[ "$MAX_WIDTH" == "0" && "$MAX_HEIGHT" == "0" ]]; then
+		echo ""
+		return 0
+	fi
+	# require identify
+	if ! command -v identify >/dev/null 2>&1; then
+		# fallback: same as previous simple resize args
+		if [[ "$MAX_WIDTH" != "0" ]]; then
 			resize_args+=(-resize "${MAX_WIDTH}x>")
-		else
+		fi
+		if [[ "$MAX_HEIGHT" != "0" ]]; then
 			resize_args+=(-resize "x${MAX_HEIGHT}>")
 		fi
+		echo "${resize_args[@]}"
+		return 0
+	fi
+	# get dimensions
+	local dims
+	dims=$(identify -format "%w %h" "$src" 2>/dev/null || echo "0 0")
+	local iw ih
+	read -r iw ih <<<"$dims"
+	if [[ "$iw" -le 0 || "$ih" -le 0 ]]; then
+		echo ""
+		return 0
+	fi
+
+	# compute overflow ratios (only if max set)
+	local wr hr
+	wr=0
+	hr=0
+	if [[ "$MAX_WIDTH" != "0" ]]; then
+		wr=$(awk "BEGIN {printf \"%.6f\", $iw/$MAX_WIDTH}")
+	fi
+	if [[ "$MAX_HEIGHT" != "0" ]]; then
+		hr=$(awk "BEGIN {printf \"%.6f\", $ih/$MAX_HEIGHT}")
+	fi
+
+	# if neither exceeds, nothing to do
+	local wex=0 hex=0
+	if (($(awk "BEGIN{print ($wr>1)}"))); then wex=1; fi
+	if (($(awk "BEGIN{print ($hr>1)}"))); then hex=1; fi
+	if [[ $wex -eq 0 && $hex -eq 0 ]]; then
+		echo ""
+		return 0
+	fi
+
+	# Decide which dimension to do first (larger overflow gets first resize)
+	if [[ $wex -eq 1 && $hex -eq 1 ]]; then
+		# both exceed; pick whichever ratio is bigger
+		if (($(awk "BEGIN{print ($wr >= $hr)}"))); then
+			# width first
+			resize_args+=(-resize "${MAX_WIDTH}x>")
+			# compute new height after width resize and decide if height resize needed
+			local new_h
+			new_h=$(awk "BEGIN {printf \"%.0f\", $ih * ($MAX_WIDTH / $iw)}")
+			if (($(awk "BEGIN{print ($new_h > $MAX_HEIGHT)}"))); then
+				resize_args+=(-resize "x${MAX_HEIGHT}>")
+			fi
+		else
+			# height first
+			resize_args+=(-resize "x${MAX_HEIGHT}>")
+			# compute new width after height resize and decide if width resize needed
+			local new_w
+			new_w=$(awk "BEGIN {printf \"%.0f\", $iw * ($MAX_HEIGHT / $ih)}")
+			if (($(awk "BEGIN{print ($new_w > $MAX_WIDTH)}"))); then
+				resize_args+=(-resize "${MAX_WIDTH}x>")
+			fi
+		fi
+	elif [[ $wex -eq 1 ]]; then
+		resize_args+=(-resize "${MAX_WIDTH}x>")
+	elif [[ $hex -eq 1 ]]; then
+		resize_args+=(-resize "x${MAX_HEIGHT}>")
 	fi
 	echo "${resize_args[@]}"
 }
@@ -70,7 +140,7 @@ convert_image() {
 
 	# Resize if requested
 	local rargs
-	rargs=$(build_resize_args)
+	rargs=$(build_resize_args "$src")
 	if [ -n "$rargs" ]; then
 		# shellcheck disable=SC2206
 		cmd+=($rargs)
