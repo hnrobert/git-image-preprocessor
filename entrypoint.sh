@@ -2,9 +2,8 @@
 set -euo pipefail
 
 # Unified entrypoint for Git Image Preprocessor
-# Uses ImageMagick `convert` for all conversions and optimizations, applies -strip when requested,
-# unified convert flow: uses ImageMagick `convert`, applies -strip, resizes if needed, re-encodes
-# with specified quality, compares sizes, replaces only if smaller.
+# Uses ffmpeg for all conversions and optimizations, removes metadata when requested,
+# resizes if needed, re-encodes with specified quality, compares sizes, replaces only if smaller.
 
 QUALITY=${1:-85}
 MAX_WIDTH=${2:-0}
@@ -17,8 +16,9 @@ SKIP_CI=${8:-false}
 REMOVE_EXIF=${9:-true}
 CONVERT_TO=${10:-""}
 MAX_SIZE_KB=${11:-0}
+SCAN_WHOLE_REPO=${12:-false}
 
-echo "Git Image Preprocessor (unified convert) starting"
+echo "Git Image Preprocessor starting"
 echo "QUALITY=$QUALITY"
 echo "MAX_WIDTH=$MAX_WIDTH"
 echo "MAX_HEIGHT=$MAX_HEIGHT"
@@ -27,9 +27,15 @@ if [ -n "$CONVERT_TO" ]; then
 fi
 echo "REMOVE_EXIF=$REMOVE_EXIF"
 echo "MAX_SIZE_KB=$MAX_SIZE_KB"
+echo "SCAN_WHOLE_REPO=$SCAN_WHOLE_REPO"
 
-if ! command -v convert >/dev/null 2>&1; then
-	echo "ImageMagick 'convert' is required. Please install imagemagick with HEIC/AVIF support." >&2
+if ! command -v ffmpeg >/dev/null 2>&1; then
+	echo "ffmpeg is required. Please install ffmpeg." >&2
+	exit 1
+fi
+
+if ! command -v ffprobe >/dev/null 2>&1; then
+	echo "ffprobe is required. Please install ffmpeg." >&2
 	exit 1
 fi
 
@@ -38,95 +44,41 @@ git config --global user.email "$GIT_USER_EMAIL"
 
 get_file_size() { stat -f%z "$1" 2>/dev/null || stat -c%s "$1" 2>/dev/null || echo 0; }
 
-# Build strip arg for ImageMagick convert (applies to all conversions/optimizations)
+# Build metadata removal flag for ffmpeg
 if [ "$REMOVE_EXIF" = "true" ]; then
-	STRIP_ARG=(-strip)
+	METADATA_ARGS=(-map_metadata -1)
 else
-	STRIP_ARG=()
+	METADATA_ARGS=()
 fi
 
 build_resize_args() {
 	# build_resize_args <src>
-	# Determine which dimension exceeds its MAX proportionally more and build sequential
-	# resize args to preserve aspect ratio. The first resize will target the dimension with
-	# the larger relative overflow, followed by the other if needed.
+	# Returns ffmpeg scale filter string if resize needed, empty otherwise
 	local src="$1"
-	local resize_args=()
 	# if neither max is set, no resize
 	if [[ "$MAX_WIDTH" == "0" && "$MAX_HEIGHT" == "0" ]]; then
 		echo ""
 		return 0
 	fi
-	# require identify
-	if ! command -v identify >/dev/null 2>&1; then
-		# fallback: same as previous simple resize args
-		if [[ "$MAX_WIDTH" != "0" ]]; then
-			resize_args+=(-resize "${MAX_WIDTH}x>")
-		fi
-		if [[ "$MAX_HEIGHT" != "0" ]]; then
-			resize_args+=(-resize "x${MAX_HEIGHT}>")
-		fi
-		echo "${resize_args[@]}"
-		return 0
-	fi
-	# get dimensions
-	local dims
-	dims=$(identify -format "%w %h" "$src" 2>/dev/null || echo "0 0")
+	# get dimensions using ffprobe
 	local iw ih
-	read -r iw ih <<<"$dims"
+	iw=$(ffprobe -v error -select_streams v:0 -show_entries stream=width -of csv=p=0 "$src" 2>/dev/null || echo 0)
+	ih=$(ffprobe -v error -select_streams v:0 -show_entries stream=height -of csv=p=0 "$src" 2>/dev/null || echo 0)
 	if [[ "$iw" -le 0 || "$ih" -le 0 ]]; then
 		echo ""
 		return 0
 	fi
 
-	# compute overflow ratios (only if max set)
-	local wr hr
-	wr=0
-	hr=0
-	if [[ "$MAX_WIDTH" != "0" ]]; then
-		wr=$(awk "BEGIN {printf \"%.6f\", $iw/$MAX_WIDTH}")
+	# Build scale filter: scale='min(MAX_WIDTH,iw):min(MAX_HEIGHT,ih):force_original_aspect_ratio=decrease'
+	local scale_filter=""
+	if [[ "$MAX_WIDTH" != "0" && "$MAX_HEIGHT" != "0" ]]; then
+		scale_filter="scale='min($MAX_WIDTH,iw)':'min($MAX_HEIGHT,ih)':force_original_aspect_ratio=decrease"
+	elif [[ "$MAX_WIDTH" != "0" ]]; then
+		scale_filter="scale='min($MAX_WIDTH,iw)':-1"
+	elif [[ "$MAX_HEIGHT" != "0" ]]; then
+		scale_filter="scale=-1:'min($MAX_HEIGHT,ih)'"
 	fi
-	if [[ "$MAX_HEIGHT" != "0" ]]; then
-		hr=$(awk "BEGIN {printf \"%.6f\", $ih/$MAX_HEIGHT}")
-	fi
-
-	# if neither exceeds, nothing to do
-	local wex=0 hex=0
-	if (($(awk "BEGIN{print ($wr>1)}"))); then wex=1; fi
-	if (($(awk "BEGIN{print ($hr>1)}"))); then hex=1; fi
-	if [[ $wex -eq 0 && $hex -eq 0 ]]; then
-		echo ""
-		return 0
-	fi
-
-	# Decide which dimension to do first (larger overflow gets first resize)
-	if [[ $wex -eq 1 && $hex -eq 1 ]]; then
-		# both exceed; pick whichever ratio is bigger
-		if (($(awk "BEGIN{print ($wr >= $hr)}"))); then
-			# width first
-			resize_args+=(-resize "${MAX_WIDTH}x>")
-			# compute new height after width resize and decide if height resize needed
-			local new_h
-			new_h=$(awk "BEGIN {printf \"%.0f\", $ih * ($MAX_WIDTH / $iw)}")
-			if (($(awk "BEGIN{print ($new_h > $MAX_HEIGHT)}"))); then
-				resize_args+=(-resize "x${MAX_HEIGHT}>")
-			fi
-		else
-			# height first
-			resize_args+=(-resize "x${MAX_HEIGHT}>")
-			# compute new width after height resize and decide if width resize needed
-			local new_w
-			new_w=$(awk "BEGIN {printf \"%.0f\", $iw * ($MAX_HEIGHT / $ih)}")
-			if (($(awk "BEGIN{print ($new_w > $MAX_WIDTH)}"))); then
-				resize_args+=(-resize "${MAX_WIDTH}x>")
-			fi
-		fi
-	elif [[ $wex -eq 1 ]]; then
-		resize_args+=(-resize "${MAX_WIDTH}x>")
-	elif [[ $hex -eq 1 ]]; then
-		resize_args+=(-resize "x${MAX_HEIGHT}>")
-	fi
-	echo "${resize_args[@]}"
+	echo "$scale_filter"
 }
 
 ensure_max_size() {
@@ -148,116 +100,59 @@ ensure_max_size() {
 	local rargs
 	rargs=$(build_resize_args "$src")
 
-	case "$ext" in
-	jpg | jpeg | webp)
-		# Binary search on quality to produce best quality <= target
-		local low=5
-		local high=$((orig_quality - 1))
-		if [ $high -lt $low ]; then high=$low; fi
-		local candidate="" candidate_size=0
-		local iter=0
-		while [ $low -le $high ] && [ $iter -lt 12 ]; do
-			iter=$((iter + 1))
-			local mid=$(((low + high) / 2))
-			local tmp_try="${tmp_current%.*}.q${mid}.tmp"
-			# Re-encode from original with quality mid
-			local cmd=(convert "$src")
-			cmd+=("${STRIP_ARG[@]}")
-			if [ -n "$rargs" ]; then
-				# shellcheck disable=SC2206
-				cmd+=($rargs)
-			fi
-			cmd+=(-quality "$mid" "$tmp_try")
-			"${cmd[@]}" >/dev/null 2>&1 || {
-				rm -f "$tmp_try" 2>/dev/null || true
-				high=$((mid - 1))
-				continue
-			}
-			local s_try
-			s_try=$(get_file_size "$tmp_try")
-			if [ $s_try -le $target_bytes ]; then
-				candidate="$tmp_try"
-				candidate_size=$s_try
-				# try higher quality to get closer to target
-				low=$((mid + 1))
-			else
-				rm -f "$tmp_try" 2>/dev/null || true
-				high=$((mid - 1))
-			fi
-		done
-		if [ -n "$candidate" ]; then
-			local min_allowed=$(awk "BEGIN {printf \"%d\", $target_bytes * 0.95}")
-			if [ $candidate_size -ge $min_allowed ]; then
-				FINAL_TMP="$candidate"
-				return 0
-			else
-				# candidate too small (<95%); try slight increase
-				local q=$((low - 1))
-				while [ $q -le $orig_quality ] && [ $q -ge 5 ]; do
-					local tmp_try2="${tmp_current%.*}.q${q}.tmp"
-					local cmd=(convert "$src")
-					cmd+=("${STRIP_ARG[@]}")
-					if [ -n "$rargs" ]; then
-						# shellcheck disable=SC2206
-						cmd+=($rargs)
-					fi
-					cmd+=(-quality "$q" "$tmp_try2")
-					"${cmd[@]}" >/dev/null 2>&1 || {
-						rm -f "$tmp_try2" 2>/dev/null || true
-						q=$((q + 1))
-						continue
-					}
-					local s2
-					s2=$(get_file_size "$tmp_try2")
-					if [ $s2 -le $target_bytes ] && [ $s2 -ge $min_allowed ]; then
-						FINAL_TMP="$tmp_try2"
-						return 0
-					fi
-					rm -f "$tmp_try2" 2>/dev/null || true
-					q=$((q + 1))
-				done
-				FINAL_TMP="$candidate"
-				return 0
-			fi
-		fi
-		return 1
-		;;
-	png)
-		# Try pngquant - starting at higher quality and decreasing
-		local base_tmp="${tmp_current%.*}.png.tmp"
-		local cmd=(convert "$src")
-		cmd+=("${STRIP_ARG[@]}")
+	# Binary search on quality for all formats using ffmpeg
+	local low=5
+	local high=$((orig_quality - 1))
+	if [ $high -lt $low ]; then high=$low; fi
+	local candidate="" candidate_size=0
+	local iter=0
+	while [ $low -le $high ] && [ $iter -lt 12 ]; do
+		iter=$((iter + 1))
+		local mid=$(((low + high) / 2))
+		local tmp_try="${tmp_current%.*}.q${mid}.tmp"
+		# Re-encode from original with quality mid using ffmpeg
+		local ff_cmd=(ffmpeg -y -i "$src")
+		ff_cmd+=("${METADATA_ARGS[@]}")
 		if [ -n "$rargs" ]; then
-			# shellcheck disable=SC2206
-			cmd+=($rargs)
+			ff_cmd+=(-vf "$rargs")
 		fi
-		cmd+=("$base_tmp")
-		"${cmd[@]}" >/dev/null 2>&1 || return 1
-		local qlist=(90 85 80 75 70 65 60 55 50 45 40)
-		for q in "${qlist[@]}"; do
-			local minq=$((q - 10))
-			if [ $minq -lt 10 ]; then minq=10; fi
-			local tmp_try="${base_tmp%.tmp}.pq${q}.png"
-			pngquant --quality="$minq-$q" --output "$tmp_try" --force "$base_tmp" >/dev/null 2>&1 || {
-				rm -f "$tmp_try" 2>/dev/null || true
-				continue
-			}
-			local s_try
-			s_try=$(get_file_size "$tmp_try")
-			if [ $s_try -le $target_bytes ]; then
-				FINAL_TMP="$tmp_try"
-				rm -f "$base_tmp" 2>/dev/null || true
-				return 0
-			fi
+		# Set quality based on format
+		case "$ext" in
+		jpg | jpeg)
+			ff_cmd+=(-q:v "$mid")
+			;;
+		webp)
+			ff_cmd+=(-q:v "$mid")
+			;;
+		png)
+			ff_cmd+=(-compression_level 9)
+			;;
+		esac
+		ff_cmd+=("$tmp_try")
+		"${ff_cmd[@]}" >/dev/null 2>&1 || {
 			rm -f "$tmp_try" 2>/dev/null || true
-		done
-		rm -f "$base_tmp" 2>/dev/null || true
-		return 1
-		;;
-	*)
-		return 1
-		;;
-	esac
+			high=$((mid - 1))
+			continue
+		}
+		local s_try
+		s_try=$(get_file_size "$tmp_try")
+		if [ $s_try -le $target_bytes ]; then
+			candidate="$tmp_try"
+			candidate_size=$s_try
+			low=$((mid + 1))
+		else
+			rm -f "$tmp_try" 2>/dev/null || true
+			high=$((mid - 1))
+		fi
+	done
+	if [ -n "$candidate" ]; then
+		local min_allowed=$(awk "BEGIN {printf \"%d\", $target_bytes * 0.95}")
+		if [ $candidate_size -ge $min_allowed ]; then
+			FINAL_TMP="$candidate"
+			return 0
+		fi
+	fi
+	return 1
 }
 
 convert_image() {
@@ -268,38 +163,40 @@ convert_image() {
 	local tmp="${dst}.tmp"
 	echo "Converting: $src -> $dst"
 
-	# Build convert command
-	local cmd=(convert "$src")
-	# Apply -strip first (if requested) to ensure we drop metadata before conversion
-	cmd+=("${STRIP_ARG[@]}")
+	# Build ffmpeg command
+	local cmd=(ffmpeg -y -i "$src")
+	# Apply metadata removal if requested
+	cmd+=("${METADATA_ARGS[@]}")
 
 	# Resize if requested
-	local rargs
-	rargs=$(build_resize_args "$src")
-	if [ -n "$rargs" ]; then
-		# shellcheck disable=SC2206
-		cmd+=($rargs)
+	local scale_filter
+	scale_filter=$(build_resize_args "$src")
+	if [ -n "$scale_filter" ]; then
+		cmd+=(-vf "$scale_filter")
 	fi
 
-	# Configure quality/encoding
+	# Configure quality/encoding based on target format
 	case "$tgt" in
 	webp)
-		cmd+=(-quality "$QUALITY" "$tmp")
+		cmd+=(-q:v "$QUALITY")
 		;;
 	png)
-		# For PNG, convert can output directly; not adding quality but use optimization later
-		cmd+=("$tmp")
+		cmd+=(-compression_level 9)
 		;;
 	jpg | jpeg)
-		cmd+=(-quality "$QUALITY" "$tmp")
-		;;
-	*)
-		cmd+=("$tmp")
+		cmd+=(-q:v "$QUALITY")
 		;;
 	esac
+	cmd+=("$tmp")
 
-	# Execute convert
-	"${cmd[@]}" >/dev/null 2>&1 || return 1
+	# Execute ffmpeg and capture stderr for debugging when it fails
+	local log_file="${tmp}.log"
+	if ! "${cmd[@]}" >/dev/null 2>"$log_file"; then
+		echo "  ⚠️ ffmpeg failed for $src -> $dst; output: $(sed -n '1,120p' "$log_file" 2>/dev/null || true)" >&2
+		rm -f "$log_file" 2>/dev/null || true
+		return 1
+	fi
+	rm -f "$log_file" 2>/dev/null || true
 
 	# Validate and compare sizes
 	[ -f "$tmp" ] || return 1
@@ -345,8 +242,11 @@ process_file() {
 
 	# Re-encode using convert even when target is same type to apply quality/strip/resize
 	local orig_size=$(get_file_size "$f")
+	# Call convert_image but avoid set -e causing an exit. Capture status explicitly.
+	set +e
 	convert_image "$f" "$target_ext"
 	local status=$?
+	set -e
 	if [ $status -eq 0 ]; then
 		# The converted temporary file path is available in $LAST_TMP
 		local tmp_out="$LAST_TMP"
@@ -358,7 +258,11 @@ process_file() {
 			local target_bytes=$((MAX_SIZE_KB * 1024))
 			if [ $new_size -gt $target_bytes ]; then
 				# try to reduce using ensure_max_size, which creates a new final file at tmp_final
+				# Attempt to ensure max size but do not exit the entire script on failure
+				set +e
 				ensure_max_size "$f" "$tmp_out" "$target_ext" "$target_bytes" "$QUALITY"
+				local em_status=$?
+				set -e
 				# ensure_max_size sets FINAL_TMP on success
 				if [ -n "${FINAL_TMP:-}" ] && [ -f "$FINAL_TMP" ]; then
 					tmp_out="$FINAL_TMP"
@@ -411,11 +315,66 @@ cleanup_tmp() {
 }
 trap cleanup_tmp EXIT
 
+get_changed_files() {
+	# Get list of changed files in PR (works for both push and pull_request events)
+	local changed_files=()
+	if [ "${GITHUB_EVENT_NAME:-}" = "pull_request" ] || [ "${GITHUB_EVENT_NAME:-}" = "pull_request_target" ]; then
+		# For PR: compare against base branch
+		local base_sha="${GITHUB_BASE_REF:-}"
+		if [ -n "$base_sha" ]; then
+			git fetch origin "$base_sha" --depth=1 2>/dev/null || true
+			while IFS= read -r file; do
+				[ -f "$file" ] && changed_files+=("$file")
+			done < <(git diff --name-only "origin/$base_sha"...HEAD 2>/dev/null || git diff --name-only HEAD~1 HEAD)
+		fi
+	else
+		# For push: get files changed in the last commit
+		while IFS= read -r file; do
+			[ -f "$file" ] && changed_files+=("$file")
+		done < <(git diff --name-only HEAD~1 HEAD 2>/dev/null || true)
+	fi
+	printf '%s\0' "${changed_files[@]}"
+}
+
 echo "Scanning patterns: $FILE_PATTERNS"
-for pattern in $FILE_PATTERNS; do while IFS= read -r -d '' f; do
-	[ -f "$f" ] || continue
-	process_file "$f"
-done < <(find . -type f -iname "$pattern" -print0); done
+
+if [ "$SCAN_WHOLE_REPO" = "false" ]; then
+	echo "Scanning only changed files in PR/commit"
+	# Get changed files and filter by patterns
+	declare -A processed_files
+	while IFS= read -r -d '' changed_file; do
+		[ -f "$changed_file" ] || continue
+		# Check if file matches any pattern
+		for pattern in $FILE_PATTERNS; do
+			if [[ "$changed_file" == $pattern ]] || [[ "$(basename "$changed_file")" == $pattern ]]; then
+				if [ -z "${processed_files[$changed_file]:-}" ]; then
+					processed_files[$changed_file]=1
+					set +e
+					process_file "$changed_file"
+					pf_status=$?
+					set -e
+					if [ $pf_status -ne 0 ]; then
+						echo "  ⚠️ Processing returned non-zero status $pf_status for file $changed_file" >&2
+					fi
+				fi
+				break
+			fi
+		done
+	done < <(get_changed_files)
+else
+	echo "Scanning entire repository"
+	for pattern in $FILE_PATTERNS; do while IFS= read -r -d '' f; do
+		[ -f "$f" ] || continue
+		# Execute process_file but avoid global exit on error
+		set +e
+		process_file "$f"
+		pf_status=$?
+		set -e
+		if [ $pf_status -ne 0 ]; then
+			echo "  ⚠️ Processing returned non-zero status $pf_status for file $f" >&2
+		fi
+	done < <(find . -type f -iname "$pattern" -print0); done
+fi
 
 echo "Done. Optimized: $OPTIMIZED_COUNT files, saved $TOTAL_SAVED bytes"
 echo "optimized-count=$OPTIMIZED_COUNT" >>$GITHUB_OUTPUT

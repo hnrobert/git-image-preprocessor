@@ -62,6 +62,11 @@ inputs:
     required: false
     default: "0"
 
+  scan-whole-repo:
+    description: "Scan entire repository (true) or only changed files in PR (false, default: false)"
+    required: false
+    default: "false"
+
 outputs:
   optimized-count:
     description: "Number of images optimized"
@@ -87,3 +92,4 @@ runs:
     - ${{ inputs.remove-exif }}
     - ${{ inputs.convert-to }}
     - ${{ inputs.max-size-kb }}
+    - ${{ inputs.scan-whole-repo }}
