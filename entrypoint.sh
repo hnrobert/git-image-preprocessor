@@ -16,6 +16,7 @@ SKIP_CI=${8:-false}
 REMOVE_EXIF=${9:-true}
 CONVERT_TO=${10:-""}
 MAX_SIZE_KB=${11:-0}
+SCAN_WHOLE_REPO=${12:-false}
 
 echo "Git Image Preprocessor starting"
 echo "QUALITY=$QUALITY"
@@ -26,6 +27,7 @@ if [ -n "$CONVERT_TO" ]; then
 fi
 echo "REMOVE_EXIF=$REMOVE_EXIF"
 echo "MAX_SIZE_KB=$MAX_SIZE_KB"
+echo "SCAN_WHOLE_REPO=$SCAN_WHOLE_REPO"
 
 if ! command -v ffmpeg >/dev/null 2>&1; then
 	echo "ffmpeg is required. Please install ffmpeg." >&2
@@ -313,18 +315,66 @@ cleanup_tmp() {
 }
 trap cleanup_tmp EXIT
 
-echo "Scanning patterns: $FILE_PATTERNS"
-for pattern in $FILE_PATTERNS; do while IFS= read -r -d '' f; do
-	[ -f "$f" ] || continue
-	# Execute process_file but avoid global exit on error
-	set +e
-	process_file "$f"
-	pf_status=$?
-	set -e
-	if [ $pf_status -ne 0 ]; then
-		echo "  ⚠️ Processing returned non-zero status $pf_status for file $f" >&2
+get_changed_files() {
+	# Get list of changed files in PR (works for both push and pull_request events)
+	local changed_files=()
+	if [ "${GITHUB_EVENT_NAME:-}" = "pull_request" ] || [ "${GITHUB_EVENT_NAME:-}" = "pull_request_target" ]; then
+		# For PR: compare against base branch
+		local base_sha="${GITHUB_BASE_REF:-}"
+		if [ -n "$base_sha" ]; then
+			git fetch origin "$base_sha" --depth=1 2>/dev/null || true
+			while IFS= read -r file; do
+				[ -f "$file" ] && changed_files+=("$file")
+			done < <(git diff --name-only "origin/$base_sha"...HEAD 2>/dev/null || git diff --name-only HEAD~1 HEAD)
+		fi
+	else
+		# For push: get files changed in the last commit
+		while IFS= read -r file; do
+			[ -f "$file" ] && changed_files+=("$file")
+		done < <(git diff --name-only HEAD~1 HEAD 2>/dev/null || true)
 	fi
-done < <(find . -type f -iname "$pattern" -print0); done
+	printf '%s\0' "${changed_files[@]}"
+}
+
+echo "Scanning patterns: $FILE_PATTERNS"
+
+if [ "$SCAN_WHOLE_REPO" = "false" ]; then
+	echo "Scanning only changed files in PR/commit"
+	# Get changed files and filter by patterns
+	declare -A processed_files
+	while IFS= read -r -d '' changed_file; do
+		[ -f "$changed_file" ] || continue
+		# Check if file matches any pattern
+		for pattern in $FILE_PATTERNS; do
+			if [[ "$changed_file" == $pattern ]] || [[ "$(basename "$changed_file")" == $pattern ]]; then
+				if [ -z "${processed_files[$changed_file]:-}" ]; then
+					processed_files[$changed_file]=1
+					set +e
+					process_file "$changed_file"
+					pf_status=$?
+					set -e
+					if [ $pf_status -ne 0 ]; then
+						echo "  ⚠️ Processing returned non-zero status $pf_status for file $changed_file" >&2
+					fi
+				fi
+				break
+			fi
+		done
+	done < <(get_changed_files)
+else
+	echo "Scanning entire repository"
+	for pattern in $FILE_PATTERNS; do while IFS= read -r -d '' f; do
+		[ -f "$f" ] || continue
+		# Execute process_file but avoid global exit on error
+		set +e
+		process_file "$f"
+		pf_status=$?
+		set -e
+		if [ $pf_status -ne 0 ]; then
+			echo "  ⚠️ Processing returned non-zero status $pf_status for file $f" >&2
+		fi
+	done < <(find . -type f -iname "$pattern" -print0); done
+fi
 
 echo "Done. Optimized: $OPTIMIZED_COUNT files, saved $TOTAL_SAVED bytes"
 echo "optimized-count=$OPTIMIZED_COUNT" >>$GITHUB_OUTPUT
