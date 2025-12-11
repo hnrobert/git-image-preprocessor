@@ -1,4 +1,5 @@
-FROM ubuntu:22.04
+# check=skip=InvalidBaseImagePlatform
+FROM jrottenberg/ffmpeg:6.1-ubuntu2204
 
 LABEL maintainer="hnrobert"
 LABEL description="Automatically compress and optimize images in commits and pull requests"
@@ -8,18 +9,8 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 # Install required packages
 RUN apt-get update && apt-get install -y \
-    imagemagick \
-    optipng \
-    pngquant \
-    jpegoptim \
-    webp \
     git \
     bc \
-    libheif-examples \
-    libheif-dev \
-    libavif-bin \
-    libavif-dev \
-    libimage-exiftool-perl \
     file \
     && rm -rf /var/lib/apt/lists/*
 
