@@ -190,9 +190,9 @@ jobs:
     commit-message: 'chore: convert and optimize images'
 ```
 
-在容器镜像中需要包含 ImageMagick (`convert`) 并启用 HEIC/AVIF 支持（例如安装 `libheif-dev` / `libavif-dev`），以支持自动转换和优化。
+在容器镜像中需要包含 `ffmpeg` 并启用 HEIC/AVIF 支持（例如安装 `libheif-dev` / `libavif-dev`），以支持自动转换和优化。
 
-注意：当进行自动转换或优化时，默认会先应用 `remove-exif=true`（通过 ImageMagick 的 `-strip`），因此 EXIF 元数据会在转换前被移除（如果启用）。
+注意：当进行自动转换或优化时，默认会先应用 `remove-exif=true`（通过 `ffmpeg` 去除元数据，例如使用 `-map_metadata -1`），因此 EXIF 元数据会在转换前被移除（如果启用）。
 
 ### 5. 限制图片尺寸
 
@@ -229,9 +229,9 @@ jobs:
 
 ## 🔧 支持的图片格式
 
-- **JPEG/JPG**：使用 ImageMagick 优化，默认去除 EXIF
+- **JPEG/JPG**：使用 `ffmpeg` 优化，默认去除 EXIF
 - **PNG**：使用 pngquant + optipng 优化，默认去除 EXIF
-- **WebP**：使用 ImageMagick 优化，默认去除 EXIF
+- **WebP**：使用 `ffmpeg` 优化，默认去除 EXIF
 
 - 如果 `convert-to` 非空，脚本会将所有不在目标格式的图片转换为 `convert-to` 指定的目标格式（jpg/png/webp），然后再进行优化。
 

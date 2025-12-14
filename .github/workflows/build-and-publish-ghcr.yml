@@ -3,10 +3,6 @@ name: Build and Publish GHCR Image
 on:
   release:
     types: [published]
-  push:
-    branches:
-      - main
-      - develop
 
 permissions:
   contents: read
@@ -39,16 +35,24 @@ jobs:
           echo "Event: $GITHUB_EVENT_NAME"
           echo "Ref: $GITHUB_REF"
           tags=""
-          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
-            if [ "$GITHUB_REF" = "refs/heads/main" ]; then
-              tags=ghcr.io/hnrobert/git-image-preprocessor:latest
-            elif [ "$GITHUB_REF" = "refs/heads/develop" ]; then
-              tags=ghcr.io/hnrobert/git-image-preprocessor:develop
+          if [ "$GITHUB_EVENT_NAME" = "release" ]; then
+            # Prefer the tag from release payload if available
+            if command -v jq >/dev/null 2>&1; then
+              tag_name=$(jq -r '.release.tag_name' < "$GITHUB_EVENT_PATH")
+              prerelease=$(jq -r '.release.prerelease' < "$GITHUB_EVENT_PATH")
+            else
+              tag_name="${GITHUB_REF#refs/tags/}"
+              prerelease=false
             fi
-          elif [ "$GITHUB_EVENT_NAME" = "release" ]; then
-            tag_name="${GITHUB_REF#refs/tags/}"
-            if [ -n "$tag_name" ]; then
-              tags=ghcr.io/hnrobert/git-image-preprocessor:$tag_name
+            if [ -n "$tag_name" ] && [ "$tag_name" != "null" ]; then
+              # Always tag with the release's tag
+              tags="ghcr.io/hnrobert/git-image-preprocessor:$tag_name"
+              # If prerelease, also tag as 'develop'; otherwise tag as 'latest'
+              if [ "$prerelease" = "true" ]; then
+                tags="$tags,ghcr.io/hnrobert/git-image-preprocessor:develop"
+              else
+                tags="$tags,ghcr.io/hnrobert/git-image-preprocessor:latest"
+              fi
             fi
           fi
           if [ -n "$tags" ]; then
