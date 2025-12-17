@@ -368,6 +368,16 @@ get_changed_files() {
 	printf '%s\0' "${changed_files[@]}"
 }
 
+in_array() {
+	# in_array <needle> <hay...>
+	local needle="$1"
+	shift || true
+	for v in "$@"; do
+		[ "$v" = "$needle" ] && return 0
+	done
+	return 1
+}
+
 write_summary() {
 	# write summary lines to GITHUB_STEP_SUMMARY if available
 	local title="$1"
@@ -390,19 +400,25 @@ if [ "$SCAN_WHOLE_REPO" = "false" ]; then
 	echo "Scanning only changed files in PR/commit"
 	# Get changed files and filter by patterns
 	declare -a all_changed_files
-	mapfile -d $'\0' -t all_changed_files < <(get_changed_files)
+	# Read NUL-delimited changed files in a portable way (mapfile is not available on macOS bash)
+	while IFS= read -r -d $'\0' cf; do
+		[ -n "$cf" ] && all_changed_files+=("$cf")
+	done < <(get_changed_files || true)
 
-	if [ ${#all_changed_files[@]} -eq 0 ]; then
+	if [ "${#all_changed_files[@]}" -eq 0 ]; then
 		echo "  ⚠️ No changed files detected in PR/commit"
 	else
 		echo "Changed files in PR/commit (${#all_changed_files[@]}):"
 		for cf in "${all_changed_files[@]}"; do
 			echo "  - $cf"
 		done
-		write_summary "Image Preprocessor - PR changed files" "${all_changed_files[@]}"
+		# Only write summary if we have at least one file
+		if [ "${#all_changed_files[@]}" -gt 0 ]; then
+			write_summary "Image Preprocessor - PR changed files" "${all_changed_files[@]}"
+		fi
 	fi
 
-	declare -A processed_files
+	declare -a processed_files
 	declare -a files_to_process
 	for changed_file in "${all_changed_files[@]}"; do
 		[ -f "$changed_file" ] || continue
@@ -411,8 +427,8 @@ if [ "$SCAN_WHOLE_REPO" = "false" ]; then
 		for pattern in $FILE_PATTERNS; do
 			lpattern=$(printf '%s' "$pattern" | tr '[:upper:]' '[:lower:]')
 			if [[ "$lname" == $lpattern ]] || [[ "$(basename "$lname")" == $lpattern ]]; then
-				if [ -z "${processed_files[$changed_file]:-}" ]; then
-					processed_files[$changed_file]=1
+				if ! in_array "$changed_file" "${processed_files[@]:-}"; then
+					processed_files+=("$changed_file")
 					files_to_process+=("$changed_file")
 				fi
 				break
@@ -420,26 +436,30 @@ if [ "$SCAN_WHOLE_REPO" = "false" ]; then
 		done
 	done
 
-	if [ ${#files_to_process[@]} -eq 0 ]; then
+	if [ "${#files_to_process[@]}" -eq 0 ]; then
 		echo "No files matching patterns were found in the changed files."
 	else
 		echo "Files matching configured patterns (${#files_to_process[@]}):"
 		for f in "${files_to_process[@]}"; do
 			echo "  - $f"
 		done
-		write_summary "Image Preprocessor - Files to process" "${files_to_process[@]}"
+		if [ "${#files_to_process[@]}" -gt 0 ]; then
+			write_summary "Image Preprocessor - Files to process" "${files_to_process[@]}"
+		fi
 	fi
 
 	# Process matching files
-	for f in "${files_to_process[@]}"; do
-		set +e
-		process_file "$f"
-		pf_status=$?
-		set -e
-		if [ $pf_status -ne 0 ]; then
-			echo "  ⚠️ Processing returned non-zero status $pf_status for file $f" >&2
-		fi
-	done
+	if [ "${#files_to_process[@]}" -gt 0 ]; then
+		for f in "${files_to_process[@]}"; do
+			set +e
+			process_file "$f"
+			pf_status=$?
+			set -e
+			if [ $pf_status -ne 0 ]; then
+				echo "  ⚠️ Processing returned non-zero status $pf_status for file $f" >&2
+			fi
+		done
+	fi
 else
 	echo "Scanning entire repository"
 	declare -a files_to_process
@@ -473,11 +493,23 @@ else
 fi
 
 echo "Done. Optimized: $OPTIMIZED_COUNT files, saved $TOTAL_SAVED bytes"
-echo "optimized-count=$OPTIMIZED_COUNT" >>$GITHUB_OUTPUT
-echo "total-saved=$TOTAL_SAVED" >>$GITHUB_OUTPUT
-echo "files-changed=${CHANGED_FILES[*]}" >>$GITHUB_OUTPUT
 
-if [ $OPTIMIZED_COUNT -gt 0 ]; then
+# Safely write outputs for GitHub Actions (guard for local runs where GITHUB_OUTPUT may be unset)
+if [ -n "${GITHUB_OUTPUT:-}" ]; then
+	echo "optimized-count=$OPTIMIZED_COUNT" >>"$GITHUB_OUTPUT"
+	echo "total-saved=$TOTAL_SAVED" >>"$GITHUB_OUTPUT"
+	files_changed_str=""
+	if [ "${#CHANGED_FILES[@]}" -gt 0 ]; then files_changed_str="${CHANGED_FILES[*]}"; fi
+	echo "files-changed=$files_changed_str" >>"$GITHUB_OUTPUT"
+else
+	echo "optimized-count=$OPTIMIZED_COUNT"
+	echo "total-saved=$TOTAL_SAVED"
+	files_changed_str=""
+	if [ "${#CHANGED_FILES[@]}" -gt 0 ]; then files_changed_str="${CHANGED_FILES[*]}"; fi
+	echo "files-changed=$files_changed_str"
+fi
+
+if [ "${OPTIMIZED_COUNT:-0}" -gt 0 ]; then
 	echo "Committing changes..."
 	for f in "${CHANGED_FILES[@]}"; do git add "$f"; done
 	[ "$SKIP_CI" = "true" ] && COMMIT_MESSAGE="$COMMIT_MESSAGE [skip ci]"
