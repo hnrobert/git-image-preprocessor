@@ -5,6 +5,7 @@
         "cwebp",
         "elif",
         "exiftool",
+        "ffprobe",
         "jpegoptim",
         "jrottenberg",
         "libavif",
