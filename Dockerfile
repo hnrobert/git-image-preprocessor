@@ -1,5 +1,5 @@
 # check=skip=InvalidBaseImagePlatform
-FROM jrottenberg/ffmpeg:6.1-ubuntu2204
+FROM jrottenberg/ffmpeg:8.0-ubuntu2404
 
 LABEL maintainer="hnrobert"
 LABEL description="Automatically compress and optimize images in commits and pull requests"
