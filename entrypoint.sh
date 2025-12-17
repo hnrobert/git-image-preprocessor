@@ -319,21 +319,69 @@ get_changed_files() {
 	# Get list of changed files in PR (works for both push and pull_request events)
 	local changed_files=()
 	if [ "${GITHUB_EVENT_NAME:-}" = "pull_request" ] || [ "${GITHUB_EVENT_NAME:-}" = "pull_request_target" ]; then
-		# For PR: compare against base branch
-		local base_sha="${GITHUB_BASE_REF:-}"
-		if [ -n "$base_sha" ]; then
-			git fetch origin "$base_sha" --depth=1 2>/dev/null || true
-			while IFS= read -r file; do
-				[ -f "$file" ] && changed_files+=("$file")
-			done < <(git diff --name-only "origin/$base_sha"...HEAD 2>/dev/null || git diff --name-only HEAD~1 HEAD)
+		# For PR: compare against base branch name in GITHUB_BASE_REF
+		local base_branch="${GITHUB_BASE_REF:-}"
+		if [ -n "$base_branch" ]; then
+			# Try to fetch the base branch; ignore failures
+			git fetch origin "$base_branch" --depth=1 2>/dev/null || git fetch origin "$base_branch":"$base_branch" --depth=1 2>/dev/null || true
+
+			# Prefer diff against origin/base_branch...HEAD
+			local diff_out
+			if git rev-parse --verify "origin/$base_branch" >/dev/null 2>&1; then
+				diff_out=$(git diff --name-only "origin/$base_branch"...HEAD 2>/dev/null || true)
+				if [ -z "$diff_out" ]; then
+					diff_out=$(git diff --name-only "origin/$base_branch"..."${GITHUB_SHA:-HEAD}" 2>/dev/null || true)
+				fi
+			else
+				# origin/base not available; try a safe HEAD~1 diff if parent exists
+				if git rev-parse --verify HEAD~1 >/dev/null 2>&1; then
+					diff_out=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || true)
+				else
+					diff_out=$(git show --name-only --pretty=format: "${GITHUB_SHA:-HEAD}" 2>/dev/null || true)
+				fi
+			fi
+
+			# Collect existing files only
+			if [ -n "$diff_out" ]; then
+				while IFS= read -r file; do
+					[ -n "$file" ] && [ -f "$file" ] && changed_files+=("$file")
+				done < <(printf '%s\n' "$diff_out")
+			fi
 		fi
 	else
-		# For push: get files changed in the last commit
-		while IFS= read -r file; do
-			[ -f "$file" ] && changed_files+=("$file")
-		done < <(git diff --name-only HEAD~1 HEAD 2>/dev/null || true)
+		# For push: get files changed in the last commit, but only if parent exists
+		if git rev-parse --verify HEAD~1 >/dev/null 2>&1; then
+			local diff_out
+			diff_out=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || true)
+			if [ -n "$diff_out" ]; then
+				while IFS= read -r file; do
+					[ -n "$file" ] && [ -f "$file" ] && changed_files+=("$file")
+				done < <(printf '%s\n' "$diff_out")
+			fi
+		else
+			# No parent commit; fall back to listing files in current tree
+			while IFS= read -r file; do
+				[ -n "$file" ] && [ -f "$file" ] && changed_files+=("$file")
+			done < <(git ls-tree -r --name-only HEAD 2>/dev/null || true)
+		fi
 	fi
 	printf '%s\0' "${changed_files[@]}"
+}
+
+write_summary() {
+	# write summary lines to GITHUB_STEP_SUMMARY if available
+	local title="$1"
+	shift
+	local arr=("$@")
+	if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+		{
+			echo "## $title"
+			for item in "${arr[@]}"; do
+				echo "- $item"
+			done
+			echo
+		} >>"$GITHUB_STEP_SUMMARY"
+	fi
 }
 
 echo "Scanning patterns: $FILE_PATTERNS"
@@ -341,31 +389,49 @@ echo "Scanning patterns: $FILE_PATTERNS"
 if [ "$SCAN_WHOLE_REPO" = "false" ]; then
 	echo "Scanning only changed files in PR/commit"
 	# Get changed files and filter by patterns
+	declare -a all_changed_files
+	mapfile -d $'\0' -t all_changed_files < <(get_changed_files)
+
+	if [ ${#all_changed_files[@]} -eq 0 ]; then
+		echo "  ⚠️ No changed files detected in PR/commit"
+	else
+		echo "Changed files in PR/commit (${#all_changed_files[@]}):"
+		for cf in "${all_changed_files[@]}"; do
+			echo "  - $cf"
+		done
+		write_summary "Image Preprocessor - PR changed files" "${all_changed_files[@]}"
+	fi
+
 	declare -A processed_files
-	while IFS= read -r -d '' changed_file; do
+	declare -a files_to_process
+	for changed_file in "${all_changed_files[@]}"; do
 		[ -f "$changed_file" ] || continue
-		# Check if file matches any pattern
+		# case-insensitive match: compare lowercased values
+		lname=$(printf '%s' "$changed_file" | tr '[:upper:]' '[:lower:]')
 		for pattern in $FILE_PATTERNS; do
-			if [[ "$changed_file" == $pattern ]] || [[ "$(basename "$changed_file")" == $pattern ]]; then
+			lpattern=$(printf '%s' "$pattern" | tr '[:upper:]' '[:lower:]')
+			if [[ "$lname" == $lpattern ]] || [[ "$(basename "$lname")" == $lpattern ]]; then
 				if [ -z "${processed_files[$changed_file]:-}" ]; then
 					processed_files[$changed_file]=1
-					set +e
-					process_file "$changed_file"
-					pf_status=$?
-					set -e
-					if [ $pf_status -ne 0 ]; then
-						echo "  ⚠️ Processing returned non-zero status $pf_status for file $changed_file" >&2
-					fi
+					files_to_process+=("$changed_file")
 				fi
 				break
 			fi
 		done
-	done < <(get_changed_files)
-else
-	echo "Scanning entire repository"
-	for pattern in $FILE_PATTERNS; do while IFS= read -r -d '' f; do
-		[ -f "$f" ] || continue
-		# Execute process_file but avoid global exit on error
+	done
+
+	if [ ${#files_to_process[@]} -eq 0 ]; then
+		echo "No files matching patterns were found in the changed files."
+	else
+		echo "Files matching configured patterns (${#files_to_process[@]}):"
+		for f in "${files_to_process[@]}"; do
+			echo "  - $f"
+		done
+		write_summary "Image Preprocessor - Files to process" "${files_to_process[@]}"
+	fi
+
+	# Process matching files
+	for f in "${files_to_process[@]}"; do
 		set +e
 		process_file "$f"
 		pf_status=$?
@@ -373,7 +439,37 @@ else
 		if [ $pf_status -ne 0 ]; then
 			echo "  ⚠️ Processing returned non-zero status $pf_status for file $f" >&2
 		fi
-	done < <(find . -type f -iname "$pattern" -print0); done
+	done
+else
+	echo "Scanning entire repository"
+	declare -a files_to_process
+	for pattern in $FILE_PATTERNS; do
+		while IFS= read -r -d '' f; do
+			[ -f "$f" ] || continue
+			files_to_process+=("$f")
+		done < <(find . -type f -iname "$pattern" -print0)
+	done
+
+	if [ ${#files_to_process[@]} -eq 0 ]; then
+		echo "No files matching configured patterns were found in the repository."
+	else
+		echo "Files matching configured patterns (${#files_to_process[@]}):"
+		for f in "${files_to_process[@]}"; do
+			echo "  - $f"
+		done
+		write_summary "Image Preprocessor - Files to process" "${files_to_process[@]}"
+	fi
+
+	# Process matching files
+	for f in "${files_to_process[@]}"; do
+		set +e
+		process_file "$f"
+		pf_status=$?
+		set -e
+		if [ $pf_status -ne 0 ]; then
+			echo "  ⚠️ Processing returned non-zero status $pf_status for file $f" >&2
+		fi
+	done
 fi
 
 echo "Done. Optimized: $OPTIMIZED_COUNT files, saved $TOTAL_SAVED bytes"
