@@ -66,9 +66,13 @@ build_resize_args() {
 		return 0
 	fi
 	# get dimensions using ffprobe
+	# Some formats (e.g., HEIC) can produce unexpected output (commas/multiple lines).
+	# Normalize to a single integer to keep numeric comparisons safe under `set -u`.
 	local iw ih
-	iw=$(ffprobe -v error -select_streams v:0 -show_entries stream=width -of csv=p=0 "$src" 2>/dev/null || echo 0)
-	ih=$(ffprobe -v error -select_streams v:0 -show_entries stream=height -of csv=p=0 "$src" 2>/dev/null || echo 0)
+	iw=$(ffprobe -v error -select_streams v:0 -show_entries stream=width -of default=nw=1:nk=1 "$src" 2>/dev/null | head -n 1 | tr -cd '0-9')
+	ih=$(ffprobe -v error -select_streams v:0 -show_entries stream=height -of default=nw=1:nk=1 "$src" 2>/dev/null | head -n 1 | tr -cd '0-9')
+	: "${iw:=0}"
+	: "${ih:=0}"
 	if [[ "$iw" -le 0 || "$ih" -le 0 ]]; then
 		echo ""
 		return 0
