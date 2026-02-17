@@ -218,7 +218,8 @@ convert_image() {
 
 process_file() {
 	local f="$1" ext="${f##*.}"
-	ext=${ext,,}
+	# portable lowercase (avoid ${var,,} which is not POSIX and fails on some bash versions)
+	ext=$(printf '%s' "$ext" | tr '[:upper:]' '[:lower:]')
 	local target_ext="$ext"
 
 	# Normalize extension aliases for comparison (jpeg->jpg, tif->tiff)
@@ -233,7 +234,7 @@ process_file() {
 	# If convert-to is set and the image is not already the target format, convert.
 	if [ -n "$CONVERT_TO" ]; then
 		local norm_target
-		norm_target="${CONVERT_TO,,}"
+		norm_target=$(printf '%s' "$CONVERT_TO" | tr '[:upper:]' '[:lower:]')
 		if [ "$norm_target" = "jpeg" ]; then norm_target="jpg"; fi
 		if [ "$norm_ext" != "$norm_target" ]; then
 			target_ext="$CONVERT_TO"
@@ -365,7 +366,12 @@ get_changed_files() {
 			done < <(git ls-tree -r --name-only HEAD 2>/dev/null || true)
 		fi
 	fi
-	printf '%s\0' "${changed_files[@]}"
+	# Safely print NUL-separated list: iterate to avoid expanding an unset/empty array
+	if [ "${changed_files+x}" = "x" ] && [ "${#changed_files[@]}" -gt 0 ]; then
+		for _f in "${changed_files[@]}"; do
+			printf '%s\0' "$_f"
+		done
+	fi
 }
 
 in_array() {
@@ -387,7 +393,7 @@ write_summary() {
 		{
 			echo "## $title"
 			for item in "${arr[@]}"; do
-				echo "- $item"
+				echo "- $(basename "$item")"
 			done
 			echo
 		} >>"$GITHUB_STEP_SUMMARY"
@@ -405,43 +411,43 @@ if [ "$SCAN_WHOLE_REPO" = "false" ]; then
 		[ -n "$cf" ] && all_changed_files+=("$cf")
 	done < <(get_changed_files || true)
 
-	if [ "${#all_changed_files[@]}" -eq 0 ]; then
+	if [ "${all_changed_files+x}" != "x" ] || [ "${#all_changed_files[@]}" -eq 0 ]; then
 		echo "  ⚠️ No changed files detected in PR/commit"
 	else
 		echo "Changed files in PR/commit (${#all_changed_files[@]}):"
 		for cf in "${all_changed_files[@]}"; do
-			echo "  - $cf"
+			echo "  - $(basename "$cf")"
 		done
-		# Only write summary if we have at least one file
-		if [ "${#all_changed_files[@]}" -gt 0 ]; then
-			write_summary "Image Preprocessor - PR changed files" "${all_changed_files[@]}"
-		fi
+		# Write summary with basenames
+		write_summary "Image Preprocessor - PR changed files" "${all_changed_files[@]}"
 	fi
 
 	declare -a processed_files
 	declare -a files_to_process
-	for changed_file in "${all_changed_files[@]}"; do
-		[ -f "$changed_file" ] || continue
-		# case-insensitive match: compare lowercased values
-		lname=$(printf '%s' "$changed_file" | tr '[:upper:]' '[:lower:]')
-		for pattern in $FILE_PATTERNS; do
-			lpattern=$(printf '%s' "$pattern" | tr '[:upper:]' '[:lower:]')
-			if [[ "$lname" == $lpattern ]] || [[ "$(basename "$lname")" == $lpattern ]]; then
-				if ! in_array "$changed_file" "${processed_files[@]:-}"; then
-					processed_files+=("$changed_file")
-					files_to_process+=("$changed_file")
+	if [ "${all_changed_files+x}" = "x" ] && [ "${#all_changed_files[@]}" -gt 0 ]; then
+		for changed_file in "${all_changed_files[@]}"; do
+			[ -f "$changed_file" ] || continue
+			# case-insensitive match: compare lowercased values
+			lname=$(printf '%s' "$changed_file" | tr '[:upper:]' '[:lower:]')
+			for pattern in $FILE_PATTERNS; do
+				lpattern=$(printf '%s' "$pattern" | tr '[:upper:]' '[:lower:]')
+				if [[ "$lname" == $lpattern ]] || [[ "$(basename "$lname")" == $lpattern ]]; then
+					if ! in_array "$changed_file" "${processed_files[@]:-}"; then
+						processed_files+=("$changed_file")
+						files_to_process+=("$changed_file")
+					fi
+					break
 				fi
-				break
-			fi
+			done
 		done
-	done
+	fi
 
 	if [ "${#files_to_process[@]}" -eq 0 ]; then
 		echo "No files matching patterns were found in the changed files."
 	else
 		echo "Files matching configured patterns (${#files_to_process[@]}):"
 		for f in "${files_to_process[@]}"; do
-			echo "  - $f"
+			echo "  - $(basename "$f")"
 		done
 		if [ "${#files_to_process[@]}" -gt 0 ]; then
 			write_summary "Image Preprocessor - Files to process" "${files_to_process[@]}"
@@ -475,7 +481,7 @@ else
 	else
 		echo "Files matching configured patterns (${#files_to_process[@]}):"
 		for f in "${files_to_process[@]}"; do
-			echo "  - $f"
+			echo "  - $(basename "$f")"
 		done
 		write_summary "Image Preprocessor - Files to process" "${files_to_process[@]}"
 	fi
@@ -499,13 +505,21 @@ if [ -n "${GITHUB_OUTPUT:-}" ]; then
 	echo "optimized-count=$OPTIMIZED_COUNT" >>"$GITHUB_OUTPUT"
 	echo "total-saved=$TOTAL_SAVED" >>"$GITHUB_OUTPUT"
 	files_changed_str=""
-	if [ "${#CHANGED_FILES[@]}" -gt 0 ]; then files_changed_str="${CHANGED_FILES[*]}"; fi
+	if [ "${#CHANGED_FILES[@]}" -gt 0 ]; then
+		_tmp=()
+		for _f in "${CHANGED_FILES[@]}"; do _tmp+=("$(basename "$_f")"); done
+		files_changed_str="${_tmp[*]}"
+	fi
 	echo "files-changed=$files_changed_str" >>"$GITHUB_OUTPUT"
 else
 	echo "optimized-count=$OPTIMIZED_COUNT"
 	echo "total-saved=$TOTAL_SAVED"
 	files_changed_str=""
-	if [ "${#CHANGED_FILES[@]}" -gt 0 ]; then files_changed_str="${CHANGED_FILES[*]}"; fi
+	if [ "${#CHANGED_FILES[@]}" -gt 0 ]; then
+		_tmp=()
+		for _f in "${CHANGED_FILES[@]}"; do _tmp+=("$(basename "$_f")"); done
+		files_changed_str="${_tmp[*]}"
+	fi
 	echo "files-changed=$files_changed_str"
 fi
 
