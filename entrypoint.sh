@@ -406,6 +406,7 @@ if [ "$SCAN_WHOLE_REPO" = "false" ]; then
 	echo "Scanning only changed files in PR/commit"
 	# Get changed files and filter by patterns
 	declare -a all_changed_files
+	all_changed_files=()
 	# Read NUL-delimited changed files in a portable way (mapfile is not available on macOS bash)
 	while IFS= read -r -d $'\0' cf; do
 		[ -n "$cf" ] && all_changed_files+=("$cf")
@@ -424,6 +425,8 @@ if [ "$SCAN_WHOLE_REPO" = "false" ]; then
 
 	declare -a processed_files
 	declare -a files_to_process
+	processed_files=()
+	files_to_process=()
 	if [ "${all_changed_files+x}" = "x" ] && [ "${#all_changed_files[@]}" -gt 0 ]; then
 		for changed_file in "${all_changed_files[@]}"; do
 			[ -f "$changed_file" ] || continue
@@ -469,6 +472,7 @@ if [ "$SCAN_WHOLE_REPO" = "false" ]; then
 else
 	echo "Scanning entire repository"
 	declare -a files_to_process
+	files_to_process=()
 	for pattern in $FILE_PATTERNS; do
 		while IFS= read -r -d '' f; do
 			[ -f "$f" ] || continue
