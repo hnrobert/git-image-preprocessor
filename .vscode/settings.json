@@ -1,5 +1,6 @@
 {
     "cSpell.words": [
+        "basenames",
         "buildx",
         "color",
         "cwebp",
@@ -12,6 +13,8 @@
         "libheif",
         "libimage",
         "libwebp",
+        "lname",
+        "lpattern",
         "minq",
         "noninteractive",
         "oneline",
