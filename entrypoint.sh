@@ -168,6 +168,8 @@ convert_image() {
 	# Usage: convert_image <src> <target_ext>
 	local src="$1"
 	local tgt="$2"
+	local src_ext="${src##*.}"
+	src_ext=$(printf '%s' "$src_ext" | tr '[:upper:]' '[:lower:]')
 	local dst="${src%.*}.${tgt}"
 	local tmp="${dst}.tmp"
 	echo "Converting: $src -> $dst"
@@ -201,9 +203,45 @@ convert_image() {
 	# Execute ffmpeg and capture stderr for debugging when it fails
 	local log_file="${tmp}.log"
 	if ! "${cmd[@]}" >/dev/null 2>"$log_file"; then
-		echo "  ⚠️ ffmpeg failed for $src -> $dst; output: $(sed -n '1,120p' "$log_file" 2>/dev/null || true)" >&2
-		rm -f "$log_file" 2>/dev/null || true
-		return 1
+		# Fallback for HEIC/HEIF variants ffmpeg cannot decode directly.
+		# Try decoding via heif-convert, then continue with ffmpeg from an intermediate PNG.
+		if { [ "$src_ext" = "heic" ] || [ "$src_ext" = "heif" ]; } && command -v heif-convert >/dev/null 2>&1; then
+			local heif_png="${tmp}.heif.png"
+			local heif_log="${tmp}.heif.log"
+			if heif-convert "$src" "$heif_png" >/dev/null 2>"$heif_log"; then
+				local cmd_fallback=(ffmpeg -y -i "$heif_png")
+				cmd_fallback+=("${METADATA_ARGS[@]}")
+				if [ -n "$scale_filter" ]; then
+					cmd_fallback+=(-vf "$scale_filter")
+				fi
+				case "$tgt" in
+				webp)
+					cmd_fallback+=(-q:v "$QUALITY")
+					;;
+				png)
+					cmd_fallback+=(-compression_level 9)
+					;;
+				jpg | jpeg)
+					cmd_fallback+=(-q:v "$QUALITY")
+					;;
+				esac
+				cmd_fallback+=("$tmp")
+				if ! "${cmd_fallback[@]}" >/dev/null 2>"$log_file"; then
+					echo "  ⚠️ ffmpeg fallback failed for $src -> $dst; output: $(sed -n '1,120p' "$log_file" 2>/dev/null || true)" >&2
+					rm -f "$heif_png" "$heif_log" "$log_file" 2>/dev/null || true
+					return 1
+				fi
+				rm -f "$heif_png" "$heif_log" 2>/dev/null || true
+			else
+				echo "  ⚠️ ffmpeg failed and heif-convert also failed for $src -> $dst; ffmpeg: $(sed -n '1,80p' "$log_file" 2>/dev/null || true) ; heif-convert: $(sed -n '1,80p' "$heif_log" 2>/dev/null || true)" >&2
+				rm -f "$heif_png" "$heif_log" "$log_file" 2>/dev/null || true
+				return 1
+			fi
+		else
+			echo "  ⚠️ ffmpeg failed for $src -> $dst; output: $(sed -n '1,120p' "$log_file" 2>/dev/null || true)" >&2
+			rm -f "$log_file" 2>/dev/null || true
+			return 1
+		fi
 	fi
 	rm -f "$log_file" 2>/dev/null || true
 
