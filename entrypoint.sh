@@ -42,6 +42,11 @@ fi
 git config --global user.name "$GIT_USER_NAME"
 git config --global user.email "$GIT_USER_EMAIL"
 
+# In GitHub Actions (especially inside container actions), git may refuse to run in the
+# checked-out workspace due to "dubious ownership". Mark the workspace as safe.
+git config --global --add safe.directory "${GITHUB_WORKSPACE:-/github/workspace}" 2>/dev/null || true
+git config --global --add safe.directory "$(pwd)" 2>/dev/null || true
+
 get_file_size() { stat -f%z "$1" 2>/dev/null || stat -c%s "$1" 2>/dev/null || echo 0; }
 
 # Build metadata removal flag for ffmpeg
@@ -318,63 +323,89 @@ trap cleanup_tmp EXIT
 
 get_changed_files() {
 	# Get list of changed files in PR (works for both push and pull_request events)
+	# If we can't run git at all, return nothing but surface a hint.
+	if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+		echo "  ⚠️ Not a git work tree; cannot detect changed files" >&2
+		return 0
+	fi
+
 	local changed_files=()
 	if [ "${GITHUB_EVENT_NAME:-}" = "pull_request" ] || [ "${GITHUB_EVENT_NAME:-}" = "pull_request_target" ]; then
-		# For PR: compare against base branch name in GITHUB_BASE_REF
-		local base_branch="${GITHUB_BASE_REF:-}"
-		if [ -n "$base_branch" ]; then
-			# Try to fetch the base branch; ignore failures
-			git fetch origin "$base_branch" --depth=1 2>/dev/null || git fetch origin "$base_branch":"$base_branch" --depth=1 2>/dev/null || true
-
-			# Prefer endpoint diff against base branch tip.
-			# NOTE: Avoid three-dot (merge-base) ranges here because shallow checkouts often
-			# don't have enough history to compute the merge base, resulting in empty output.
-			local diff_out
-			if git rev-parse --verify "origin/$base_branch" >/dev/null 2>&1; then
-				diff_out=$(git diff --name-only "origin/$base_branch" "${GITHUB_SHA:-HEAD}" 2>/dev/null || true)
-				if [ -z "$diff_out" ]; then
-					diff_out=$(git diff --name-only "origin/$base_branch" HEAD 2>/dev/null || true)
-				fi
-			else
-				# origin/base not available; try local base branch ref
-				if git rev-parse --verify "$base_branch" >/dev/null 2>&1; then
-					diff_out=$(git diff --name-only "$base_branch" "${GITHUB_SHA:-HEAD}" 2>/dev/null || true)
+		# Prefer base/head SHAs from the GitHub event payload when available.
+		# This avoids relying on branch names and reduces issues with shallow history.
+		if [ -n "${GITHUB_EVENT_PATH:-}" ] && [ -f "${GITHUB_EVENT_PATH:-}" ]; then
+			local base_sha head_sha
+			base_sha=$(sed -n 's/.*"base"[[:space:]]*:[[:space:]]*{[^}]*"sha"[[:space:]]*:[[:space:]]*"\([0-9a-f]\{40\}\)".*/\1/p' "${GITHUB_EVENT_PATH}" | head -n 1)
+			head_sha=$(sed -n 's/.*"head"[[:space:]]*:[[:space:]]*{[^}]*"sha"[[:space:]]*:[[:space:]]*"\([0-9a-f]\{40\}\)".*/\1/p' "${GITHUB_EVENT_PATH}" | head -n 1)
+			if [ -n "${base_sha:-}" ] && [ -n "${head_sha:-}" ]; then
+				git fetch --no-tags --depth=1 origin "$base_sha" 2>/dev/null || true
+				git fetch --no-tags --depth=1 origin "$head_sha" 2>/dev/null || true
+				local diff_out
+				diff_out=$(git diff --name-only "$base_sha" "$head_sha" 2>/dev/null || true)
+				if [ -n "$diff_out" ]; then
+					while IFS= read -r file; do
+						[ -n "$file" ] && [ -f "$file" ] && changed_files+=("$file")
+					done < <(printf '%s\n' "$diff_out")
 				fi
 			fi
+		fi
 
-			# If still empty, try a PR merge-commit parent diff (works when HEAD is a merge commit)
-			if [ -z "${diff_out:-}" ] && git rev-parse --verify HEAD^2 >/dev/null 2>&1; then
-				diff_out=$(git diff --name-only HEAD^1 HEAD^2 2>/dev/null || true)
-			fi
+		# If event payload path wasn't available or didn't yield results, fall back to base ref logic.
+		if [ "${#changed_files[@]}" -eq 0 ]; then
+			# For PR: compare against base branch name in GITHUB_BASE_REF
+			local base_branch="${GITHUB_BASE_REF:-}"
+			if [ -n "$base_branch" ]; then
+				# Try to fetch the base branch; ignore failures
+				git fetch origin "$base_branch" --depth=1 2>/dev/null || git fetch origin "$base_branch":"$base_branch" --depth=1 2>/dev/null || true
 
-			# As a last resort in PR context, fall back to last-commit diff/show
-			if [ -z "${diff_out:-}" ]; then
-				if git rev-parse --verify HEAD~1 >/dev/null 2>&1; then
-					diff_out=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || true)
+				# Prefer endpoint diff against base branch tip.
+				# NOTE: Avoid three-dot (merge-base) ranges here because shallow checkouts often
+				# don't have enough history to compute the merge base, resulting in empty output.
+				local diff_out
+				if git rev-parse --verify "origin/$base_branch" >/dev/null 2>&1; then
+					diff_out=$(git diff --name-only "origin/$base_branch" "${GITHUB_SHA:-HEAD}" 2>/dev/null || true)
+					if [ -z "$diff_out" ]; then
+						diff_out=$(git diff --name-only "origin/$base_branch" HEAD 2>/dev/null || true)
+					fi
 				else
-					diff_out=$(git show --name-only --pretty=format: "${GITHUB_SHA:-HEAD}" 2>/dev/null || true)
+					# origin/base not available; try local base branch ref
+					if git rev-parse --verify "$base_branch" >/dev/null 2>&1; then
+						diff_out=$(git diff --name-only "$base_branch" "${GITHUB_SHA:-HEAD}" 2>/dev/null || true)
+					fi
 				fi
-			fi
 
-			# Collect existing files only
-			if [ -n "$diff_out" ]; then
-				while IFS= read -r file; do
-					[ -n "$file" ] && [ -f "$file" ] && changed_files+=("$file")
-				done < <(printf '%s\n' "$diff_out")
+				# If still empty, try a PR merge-commit parent diff (works when HEAD is a merge commit)
+				if [ -z "${diff_out:-}" ] && git rev-parse --verify HEAD^2 >/dev/null 2>&1; then
+					diff_out=$(git diff --name-only HEAD^1 HEAD^2 2>/dev/null || true)
+				fi
+
+				# As a last resort in PR context, fall back to last-commit diff/show
+				if [ -z "${diff_out:-}" ]; then
+					if git rev-parse --verify HEAD~1 >/dev/null 2>&1; then
+						diff_out=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || true)
+					else
+						diff_out=$(git show --name-only --pretty=format: "${GITHUB_SHA:-HEAD}" 2>/dev/null || true)
+					fi
+				fi
+
+				# Collect existing files only
+				if [ -n "$diff_out" ]; then
+					while IFS= read -r file; do
+						[ -n "$file" ] && [ -f "$file" ] && changed_files+=("$file")
+					done < <(printf '%s\n' "$diff_out")
+				fi
 			fi
 		fi
 	else
-		# For push: get files changed in the last commit, but only if parent exists
-		if git rev-parse --verify HEAD~1 >/dev/null 2>&1; then
-			local diff_out
-			diff_out=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || true)
-			if [ -n "$diff_out" ]; then
-				while IFS= read -r file; do
-					[ -n "$file" ] && [ -f "$file" ] && changed_files+=("$file")
-				done < <(printf '%s\n' "$diff_out")
-			fi
+		# For push: prefer files in the commit (works even with fetch-depth: 1)
+		local diff_out
+		diff_out=$(git show --name-only --pretty=format: "${GITHUB_SHA:-HEAD}" 2>/dev/null || true)
+		if [ -n "$diff_out" ]; then
+			while IFS= read -r file; do
+				[ -n "$file" ] && [ -f "$file" ] && changed_files+=("$file")
+			done < <(printf '%s\n' "$diff_out")
 		else
-			# No parent commit; fall back to listing files in current tree
+			# If we couldn't list commit files (e.g., initial commit edge cases), fall back to the tree
 			while IFS= read -r file; do
 				[ -n "$file" ] && [ -f "$file" ] && changed_files+=("$file")
 			done < <(git ls-tree -r --name-only HEAD 2>/dev/null || true)
