@@ -326,15 +326,29 @@ get_changed_files() {
 			# Try to fetch the base branch; ignore failures
 			git fetch origin "$base_branch" --depth=1 2>/dev/null || git fetch origin "$base_branch":"$base_branch" --depth=1 2>/dev/null || true
 
-			# Prefer diff against origin/base_branch...HEAD
+			# Prefer endpoint diff against base branch tip.
+			# NOTE: Avoid three-dot (merge-base) ranges here because shallow checkouts often
+			# don't have enough history to compute the merge base, resulting in empty output.
 			local diff_out
 			if git rev-parse --verify "origin/$base_branch" >/dev/null 2>&1; then
-				diff_out=$(git diff --name-only "origin/$base_branch"...HEAD 2>/dev/null || true)
+				diff_out=$(git diff --name-only "origin/$base_branch" "${GITHUB_SHA:-HEAD}" 2>/dev/null || true)
 				if [ -z "$diff_out" ]; then
-					diff_out=$(git diff --name-only "origin/$base_branch"..."${GITHUB_SHA:-HEAD}" 2>/dev/null || true)
+					diff_out=$(git diff --name-only "origin/$base_branch" HEAD 2>/dev/null || true)
 				fi
 			else
-				# origin/base not available; try a safe HEAD~1 diff if parent exists
+				# origin/base not available; try local base branch ref
+				if git rev-parse --verify "$base_branch" >/dev/null 2>&1; then
+					diff_out=$(git diff --name-only "$base_branch" "${GITHUB_SHA:-HEAD}" 2>/dev/null || true)
+				fi
+			fi
+
+			# If still empty, try a PR merge-commit parent diff (works when HEAD is a merge commit)
+			if [ -z "${diff_out:-}" ] && git rev-parse --verify HEAD^2 >/dev/null 2>&1; then
+				diff_out=$(git diff --name-only HEAD^1 HEAD^2 2>/dev/null || true)
+			fi
+
+			# As a last resort in PR context, fall back to last-commit diff/show
+			if [ -z "${diff_out:-}" ]; then
 				if git rev-parse --verify HEAD~1 >/dev/null 2>&1; then
 					diff_out=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || true)
 				else
