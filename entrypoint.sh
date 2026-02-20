@@ -95,6 +95,8 @@ ensure_max_size() {
 	local src="$1"
 	local tmp_current="$2"
 	local ext="$3"
+	local ext_lc
+	ext_lc=$(printf '%s' "$ext" | tr '[:upper:]' '[:lower:]')
 	local target_bytes="$4"
 	local orig_quality="$5"
 	FINAL_TMP=""
@@ -118,7 +120,7 @@ ensure_max_size() {
 	while [ $low -le $high ] && [ $iter -lt 12 ]; do
 		iter=$((iter + 1))
 		local mid=$(((low + high) / 2))
-		local tmp_try="${tmp_current%.*}.q${mid}.tmp"
+		local tmp_try="${tmp_current%.*}.q${mid}.${ext_lc}"
 		# Re-encode from original with quality mid using ffmpeg
 		local ff_cmd=(ffmpeg -y -i "$src")
 		ff_cmd+=("${METADATA_ARGS[@]}")
@@ -126,7 +128,7 @@ ensure_max_size() {
 			ff_cmd+=(-vf "$rargs")
 		fi
 		# Set quality based on format
-		case "$ext" in
+		case "$ext_lc" in
 		jpg | jpeg)
 			ff_cmd+=(-q:v "$mid")
 			;;
@@ -168,10 +170,12 @@ convert_image() {
 	# Usage: convert_image <src> <target_ext>
 	local src="$1"
 	local tgt="$2"
+	local tgt_lc
+	tgt_lc=$(printf '%s' "$tgt" | tr '[:upper:]' '[:lower:]')
 	local src_ext="${src##*.}"
 	src_ext=$(printf '%s' "$src_ext" | tr '[:upper:]' '[:lower:]')
 	local dst="${src%.*}.${tgt}"
-	local tmp="${dst}.tmp"
+	local tmp="${dst%.*}.tmp.${tgt_lc}"
 	echo "Converting: $src -> $dst"
 
 	# Build ffmpeg command
@@ -187,7 +191,7 @@ convert_image() {
 	fi
 
 	# Configure quality/encoding based on target format
-	case "$tgt" in
+	case "$tgt_lc" in
 	webp)
 		cmd+=(-q:v "$QUALITY")
 		;;
@@ -214,7 +218,7 @@ convert_image() {
 				if [ -n "$scale_filter" ]; then
 					cmd_fallback+=(-vf "$scale_filter")
 				fi
-				case "$tgt" in
+				case "$tgt_lc" in
 				webp)
 					cmd_fallback+=(-q:v "$QUALITY")
 					;;
