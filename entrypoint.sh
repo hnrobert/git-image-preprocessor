@@ -179,7 +179,13 @@ convert_image() {
 	echo "Converting: $src -> $dst"
 
 	# Build ffmpeg command
-	local cmd=(ffmpeg -y -i "$src")
+	local cmd=(ffmpeg -y)
+	# HEIC/HEIF often includes auxiliary streams; decode only primary image stream when possible.
+	if [ "$src_ext" = "heic" ] || [ "$src_ext" = "heif" ]; then
+		cmd+=(-probesize 100M -analyzeduration 100M -ignore_unknown -i "$src" -map 0:v:0 -frames:v 1)
+	else
+		cmd+=(-i "$src")
+	fi
 	# Apply metadata removal if requested
 	cmd+=("${METADATA_ARGS[@]}")
 
@@ -291,6 +297,10 @@ process_file() {
 		if [ "$norm_ext" != "$norm_target" ]; then
 			target_ext="$CONVERT_TO"
 		fi
+	elif [ "$norm_ext" = "heic" ] || [ "$norm_ext" = "heif" ]; then
+		# Prefer JPEG output for HEIC/HEIF when convert-to is not explicitly set.
+		# Re-encoding HEIC is less portable across ffmpeg builds.
+		target_ext="jpg"
 	fi
 
 	# Re-encode using convert even when target is same type to apply quality/strip/resize
