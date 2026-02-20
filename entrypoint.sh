@@ -233,9 +233,10 @@ convert_image() {
 				fi
 				rm -f "$heif_png" "$heif_log" 2>/dev/null || true
 			else
-				echo "  ⚠️ ffmpeg failed and heif-convert also failed for $src -> $dst; ffmpeg: $(sed -n '1,80p' "$log_file" 2>/dev/null || true) ; heif-convert: $(sed -n '1,80p' "$heif_log" 2>/dev/null || true)" >&2
+				echo "  ⚠️ Unsupported HEIC/HEIF variant, skipping $src; ffmpeg: $(sed -n '1,40p' "$log_file" 2>/dev/null || true) ; heif-convert: $(sed -n '1,40p' "$heif_log" 2>/dev/null || true)" >&2
 				rm -f "$heif_png" "$heif_log" "$log_file" 2>/dev/null || true
-				return 1
+				# Return 3 means source format couldn't be decoded by available tools.
+				return 3
 			fi
 		else
 			echo "  ⚠️ ffmpeg failed for $src -> $dst; output: $(sed -n '1,120p' "$log_file" 2>/dev/null || true)" >&2
@@ -344,6 +345,9 @@ process_file() {
 	elif [ $status -eq 2 ]; then
 		echo "  ⚠️ Converted $f produced larger file; skipped replacement"
 		return 2
+	elif [ $status -eq 3 ]; then
+		echo "  ⚠️ Skipped unsupported image variant: $f"
+		return 0
 	else
 		echo "  ⚠️ Conversion failed for $f"
 		return 1

@@ -1,5 +1,5 @@
 # check=skip=InvalidBaseImagePlatform
-FROM jrottenberg/ffmpeg:8.0-ubuntu2404
+FROM ghcr.io/hnrobert/ffmpeg-heif:latest
 
 LABEL maintainer="hnrobert"
 LABEL description="Automatically compress and optimize images in commits and pull requests"
