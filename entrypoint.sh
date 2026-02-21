@@ -181,23 +181,7 @@ convert_image() {
 	# Build ffmpeg command
 	local cmd=(ffmpeg -y)
 	if [ "$src_ext" = "heic" ] || [ "$src_ext" = "heif" ]; then
-		# HEIC/HEIF may expose multiple image streams (thumbnail/tile/aux). Pick the largest stream
-		# to avoid converting an auxiliary corner tile as the final output.
-		local best_stream_idx
-		best_stream_idx=$(ffprobe -v error -select_streams v -show_entries stream=index,width,height -of csv=p=0 "$src" |
-			awk -F',' '
-				{ gsub(/[^0-9]/, "", $1); gsub(/[^0-9]/, "", $2); gsub(/[^0-9]/, "", $3); }
-				($1 != "" && $2 != "" && $3 != "") {
-					area = $2 * $3;
-					if (area > max) { max = area; idx = $1; }
-				}
-				END { if (idx != "") print idx; }
-			' 2>/dev/null || true)
-
 		cmd+=(-probesize 100M -analyzeduration 100M -ignore_unknown -i "$src")
-		if [ -n "${best_stream_idx:-}" ]; then
-			cmd+=(-map "0:${best_stream_idx}")
-		fi
 		cmd+=(-frames:v 1)
 	else
 		cmd+=(-i "$src")
@@ -228,7 +212,66 @@ convert_image() {
 
 	# Execute ffmpeg and capture stderr for debugging when it fails
 	local log_file="${tmp}.log"
-	if ! "${cmd[@]}" >/dev/null 2>"$log_file"; then
+	local heic_preconverted=false
+	if [ "$src_ext" = "heic" ] || [ "$src_ext" = "heif" ]; then
+		# Try candidate streams and keep the largest decoded output to avoid corner/tile crops.
+		local best_tmp=""
+		local best_area=0
+		while IFS=, read -r stream_idx _ stream_area; do
+			stream_idx=$(printf '%s' "$stream_idx" | tr -cd '0-9')
+			[ -n "$stream_idx" ] || continue
+			local try_tmp="${tmp}.s${stream_idx}.${tgt_lc}"
+			local try_log="${try_tmp}.log"
+			local try_cmd=(ffmpeg -y -probesize 100M -analyzeduration 100M -ignore_unknown -i "$src" -map "0:${stream_idx}" -frames:v 1)
+			try_cmd+=("${METADATA_ARGS[@]}")
+			if [ -n "$scale_filter" ]; then
+				try_cmd+=(-vf "$scale_filter")
+			fi
+			case "$tgt_lc" in
+			webp)
+				try_cmd+=(-q:v "$QUALITY")
+				;;
+			png)
+				try_cmd+=(-compression_level 9)
+				;;
+			jpg | jpeg)
+				try_cmd+=(-q:v "$QUALITY")
+				;;
+			esac
+			try_cmd+=("$try_tmp")
+
+			if "${try_cmd[@]}" >/dev/null 2>"$try_log"; then
+				local out_w out_h out_area
+				out_w=$(ffprobe -v error -select_streams v:0 -show_entries stream=width -of default=nw=1:nk=1 "$try_tmp" 2>/dev/null | head -n 1 | tr -cd '0-9')
+				out_h=$(ffprobe -v error -select_streams v:0 -show_entries stream=height -of default=nw=1:nk=1 "$try_tmp" 2>/dev/null | head -n 1 | tr -cd '0-9')
+				: "${out_w:=0}"
+				: "${out_h:=0}"
+				out_area=$((out_w * out_h))
+				if [ "$out_area" -gt "$best_area" ]; then
+					[ -n "$best_tmp" ] && rm -f "$best_tmp" 2>/dev/null || true
+					best_tmp="$try_tmp"
+					best_area="$out_area"
+				else
+					rm -f "$try_tmp" 2>/dev/null || true
+				fi
+			fi
+			rm -f "$try_log" 2>/dev/null || true
+		done < <(
+			ffprobe -v error -select_streams v -show_entries stream=index,width,height -of csv=p=0 "$src" |
+				awk -F',' '
+					{ gsub(/[^0-9]/, "", $1); gsub(/[^0-9]/, "", $2); gsub(/[^0-9]/, "", $3); }
+					($1 != "" && $2 != "" && $3 != "") { print $1 "," $2 "," ($2*$3); }
+				' |
+				sort -t',' -k3,3nr
+		)
+
+		if [ -n "$best_tmp" ] && [ -f "$best_tmp" ]; then
+			mv "$best_tmp" "$tmp"
+			heic_preconverted=true
+		fi
+	fi
+
+	if [ "$heic_preconverted" != "true" ] && ! "${cmd[@]}" >/dev/null 2>"$log_file"; then
 		if [ "$src_ext" = "heic" ] || [ "$src_ext" = "heif" ]; then
 			echo "  ⚠️ Unsupported HEIC/HEIF variant, skipping $src; ffmpeg: $(sed -n '1,80p' "$log_file" 2>/dev/null || true)" >&2
 			rm -f "$log_file" 2>/dev/null || true
@@ -290,6 +333,13 @@ process_file() {
 
 	# Re-encode using convert even when target is same type to apply quality/strip/resize
 	local orig_size=$(get_file_size "$f")
+	if [[ "$MAX_SIZE_KB" != "0" && "$MAX_SIZE_KB" != "" ]]; then
+		local orig_target_bytes=$((MAX_SIZE_KB * 1024))
+		if [ "$orig_size" -le "$orig_target_bytes" ]; then
+			echo "  ℹ️ Skipping $f: already within MAX_SIZE_KB (${orig_size} <= ${orig_target_bytes})"
+			return 0
+		fi
+	fi
 	# Call convert_image but avoid set -e causing an exit. Capture status explicitly.
 	set +e
 	convert_image "$f" "$target_ext"
@@ -344,7 +394,7 @@ process_file() {
 		return 0
 	elif [ $status -eq 2 ]; then
 		echo "  ⚠️ Converted $f produced larger file; skipped replacement"
-		return 2
+		return 0
 	elif [ $status -eq 3 ]; then
 		echo "  ⚠️ Skipped unsupported image variant: $f"
 		return 0
@@ -555,7 +605,7 @@ if [ "$SCAN_WHOLE_REPO" = "false" ]; then
 			process_file "$f"
 			pf_status=$?
 			set -e
-			if [ $pf_status -ne 0 ]; then
+			if [ $pf_status -eq 1 ]; then
 				echo "  ⚠️ Processing returned non-zero status $pf_status for file $f" >&2
 			fi
 		done
@@ -587,7 +637,7 @@ else
 		process_file "$f"
 		pf_status=$?
 		set -e
-		if [ $pf_status -ne 0 ]; then
+		if [ $pf_status -eq 1 ]; then
 			echo "  ⚠️ Processing returned non-zero status $pf_status for file $f" >&2
 		fi
 	done
