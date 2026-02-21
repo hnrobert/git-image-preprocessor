@@ -177,21 +177,36 @@ convert_image() {
 	local dst="${src%.*}.${tgt}"
 	local tmp="${dst%.*}.tmp.${tgt_lc}"
 	echo "Converting: $src -> $dst"
+	LAST_REENCODE_SRC="$src"
+
+	# For HEIC/HEIF, decode with heif-convert first, then continue with ffmpeg pipeline.
+	local ff_input="$src"
+	local decoded_tmp=""
+	if [ "$src_ext" = "heic" ] || [ "$src_ext" = "heif" ]; then
+		if ! command -v heif-convert >/dev/null 2>&1; then
+			echo "  ⚠️ heif-convert is required for HEIC/HEIF conversion" >&2
+			return 1
+		fi
+		decoded_tmp="${tmp}.decoded.png"
+		local decode_log="${decoded_tmp}.log"
+		if ! heif-convert "$src" "$decoded_tmp" >/dev/null 2>"$decode_log"; then
+			echo "  ⚠️ Unsupported HEIC/HEIF variant, skipping $src; heif-convert: $(sed -n '1,80p' "$decode_log" 2>/dev/null || true)" >&2
+			rm -f "$decode_log" "$decoded_tmp" 2>/dev/null || true
+			return 3
+		fi
+		rm -f "$decode_log" 2>/dev/null || true
+		ff_input="$decoded_tmp"
+		LAST_REENCODE_SRC="$decoded_tmp"
+	fi
 
 	# Build ffmpeg command
-	local cmd=(ffmpeg -y)
-	if [ "$src_ext" = "heic" ] || [ "$src_ext" = "heif" ]; then
-		cmd+=(-probesize 100M -analyzeduration 100M -ignore_unknown -i "$src")
-		cmd+=(-frames:v 1)
-	else
-		cmd+=(-i "$src")
-	fi
+	local cmd=(ffmpeg -y -i "$ff_input")
 	# Apply metadata removal if requested
 	cmd+=("${METADATA_ARGS[@]}")
 
 	# Resize if requested
 	local scale_filter
-	scale_filter=$(build_resize_args "$src")
+	scale_filter=$(build_resize_args "$ff_input")
 	if [ -n "$scale_filter" ]; then
 		cmd+=(-vf "$scale_filter")
 	fi
@@ -213,14 +228,10 @@ convert_image() {
 	# Execute ffmpeg and capture stderr for debugging when it fails
 	local log_file="${tmp}.log"
 	if ! "${cmd[@]}" >/dev/null 2>"$log_file"; then
-		if [ "$src_ext" = "heic" ] || [ "$src_ext" = "heif" ]; then
-			echo "  ⚠️ Unsupported HEIC/HEIF variant, skipping $src; ffmpeg: $(sed -n '1,80p' "$log_file" 2>/dev/null || true)" >&2
-			rm -f "$log_file" 2>/dev/null || true
-			# Return 3 means source format couldn't be decoded by ffmpeg.
-			return 3
-		fi
 		echo "  ⚠️ ffmpeg failed for $src -> $dst; output: $(sed -n '1,120p' "$log_file" 2>/dev/null || true)" >&2
 		rm -f "$log_file" 2>/dev/null || true
+		[ -n "$decoded_tmp" ] && rm -f "$decoded_tmp" 2>/dev/null || true
+		LAST_REENCODE_SRC="$src"
 		return 1
 	fi
 	rm -f "$log_file" 2>/dev/null || true
@@ -274,9 +285,12 @@ process_file() {
 
 	# Re-encode using convert even when target is same type to apply quality/strip/resize
 	local orig_size=$(get_file_size "$f")
+	if [ "$target_ext" = "jpeg" ]; then
+		target_ext="jpg"
+	fi
 	if [[ "$MAX_SIZE_KB" != "0" && "$MAX_SIZE_KB" != "" ]]; then
 		local orig_target_bytes=$((MAX_SIZE_KB * 1024))
-		if [ "$orig_size" -le "$orig_target_bytes" ]; then
+		if [ "$target_ext" = "$ext" ] && [ "$orig_size" -le "$orig_target_bytes" ]; then
 			echo "  ℹ️ Skipping $f: already within MAX_SIZE_KB (${orig_size} <= ${orig_target_bytes})"
 			return 0
 		fi
@@ -290,6 +304,7 @@ process_file() {
 		# The converted temporary file path is available in $LAST_TMP
 		local tmp_out="$LAST_TMP"
 		local new_file="${f%.*}.${target_ext}"
+		local reencode_src="${LAST_REENCODE_SRC:-$f}"
 		local new_size=$(get_file_size "$tmp_out")
 		# If max-size-kb specified, enforce size target by re-encoding from original image
 		if [[ "$MAX_SIZE_KB" != "0" && "$MAX_SIZE_KB" != "" ]]; then
@@ -299,7 +314,7 @@ process_file() {
 				# try to reduce using ensure_max_size, which creates a new final file at tmp_final
 				# Attempt to ensure max size but do not exit the entire script on failure
 				set +e
-				ensure_max_size "$f" "$tmp_out" "$target_ext" "$target_bytes" "$QUALITY"
+				ensure_max_size "$reencode_src" "$tmp_out" "$target_ext" "$target_bytes" "$QUALITY"
 				local em_status=$?
 				set -e
 				# ensure_max_size sets FINAL_TMP on success
@@ -328,19 +343,39 @@ process_file() {
 			# clear FINAL_TMP and LAST_TMP
 			FINAL_TMP=""
 			LAST_TMP=""
+			if [ -n "${LAST_REENCODE_SRC:-}" ] && [ "${LAST_REENCODE_SRC}" != "$f" ] && [ -f "${LAST_REENCODE_SRC}" ]; then
+				rm -f "${LAST_REENCODE_SRC}" 2>/dev/null || true
+			fi
+			LAST_REENCODE_SRC="$f"
 		else
 			# no improvement - remove tmp files and skip replacement
 			rm -f "$tmp_out" || true
+			if [ -n "${LAST_REENCODE_SRC:-}" ] && [ "${LAST_REENCODE_SRC}" != "$f" ] && [ -f "${LAST_REENCODE_SRC}" ]; then
+				rm -f "${LAST_REENCODE_SRC}" 2>/dev/null || true
+			fi
+			LAST_REENCODE_SRC="$f"
 		fi
 		return 0
 	elif [ $status -eq 2 ]; then
 		echo "  ⚠️ Converted $f produced larger file; skipped replacement"
+		if [ -n "${LAST_REENCODE_SRC:-}" ] && [ "${LAST_REENCODE_SRC}" != "$f" ] && [ -f "${LAST_REENCODE_SRC}" ]; then
+			rm -f "${LAST_REENCODE_SRC}" 2>/dev/null || true
+		fi
+		LAST_REENCODE_SRC="$f"
 		return 0
 	elif [ $status -eq 3 ]; then
 		echo "  ⚠️ Skipped unsupported image variant: $f"
+		if [ -n "${LAST_REENCODE_SRC:-}" ] && [ "${LAST_REENCODE_SRC}" != "$f" ] && [ -f "${LAST_REENCODE_SRC}" ]; then
+			rm -f "${LAST_REENCODE_SRC}" 2>/dev/null || true
+		fi
+		LAST_REENCODE_SRC="$f"
 		return 0
 	else
 		echo "  ⚠️ Conversion failed for $f"
+		if [ -n "${LAST_REENCODE_SRC:-}" ] && [ "${LAST_REENCODE_SRC}" != "$f" ] && [ -f "${LAST_REENCODE_SRC}" ]; then
+			rm -f "${LAST_REENCODE_SRC}" 2>/dev/null || true
+		fi
+		LAST_REENCODE_SRC="$f"
 		return 1
 	fi
 }
@@ -351,10 +386,14 @@ TOTAL_SAVED=0
 
 FINAL_TMP=""
 LAST_TMP=""
+LAST_REENCODE_SRC=""
 
 cleanup_tmp() {
 	[ -n "${LAST_TMP:-}" ] && rm -f "$LAST_TMP" 2>/dev/null || true
 	[ -n "${FINAL_TMP:-}" ] && rm -f "$FINAL_TMP" 2>/dev/null || true
+	if [ -n "${LAST_REENCODE_SRC:-}" ] && [ -f "${LAST_REENCODE_SRC}" ]; then
+		rm -f "${LAST_REENCODE_SRC}" 2>/dev/null || true
+	fi
 }
 trap cleanup_tmp EXIT
 
