@@ -79,7 +79,7 @@ outputs:
 
 runs:
   using: "docker"
-  image: "docker://ghcr.io/hnrobert/git-image-preprocessor:v0.1.16"
+  image: "docker://ghcr.io/hnrobert/git-image-preprocessor:v0.1.17"
   args:
     - ${{ inputs.quality }}
     - ${{ inputs.max-width }}
