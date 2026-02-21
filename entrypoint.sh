@@ -180,9 +180,25 @@ convert_image() {
 
 	# Build ffmpeg command
 	local cmd=(ffmpeg -y)
-	# HEIC/HEIF often includes auxiliary streams; decode only primary image stream when possible.
 	if [ "$src_ext" = "heic" ] || [ "$src_ext" = "heif" ]; then
-		cmd+=(-probesize 100M -analyzeduration 100M -ignore_unknown -i "$src" -map 0:v:0 -frames:v 1)
+		# HEIC/HEIF may expose multiple image streams (thumbnail/tile/aux). Pick the largest stream
+		# to avoid converting an auxiliary corner tile as the final output.
+		local best_stream_idx
+		best_stream_idx=$(ffprobe -v error -select_streams v -show_entries stream=index,width,height -of csv=p=0 "$src" |
+			awk -F',' '
+				{ gsub(/[^0-9]/, "", $1); gsub(/[^0-9]/, "", $2); gsub(/[^0-9]/, "", $3); }
+				($1 != "" && $2 != "" && $3 != "") {
+					area = $2 * $3;
+					if (area > max) { max = area; idx = $1; }
+				}
+				END { if (idx != "") print idx; }
+			' 2>/dev/null || true)
+
+		cmd+=(-probesize 100M -analyzeduration 100M -ignore_unknown -i "$src")
+		if [ -n "${best_stream_idx:-}" ]; then
+			cmd+=(-map "0:${best_stream_idx}")
+		fi
+		cmd+=(-frames:v 1)
 	else
 		cmd+=(-i "$src")
 	fi
@@ -213,46 +229,15 @@ convert_image() {
 	# Execute ffmpeg and capture stderr for debugging when it fails
 	local log_file="${tmp}.log"
 	if ! "${cmd[@]}" >/dev/null 2>"$log_file"; then
-		# Fallback for HEIC/HEIF variants ffmpeg cannot decode directly.
-		# Try decoding via heif-convert, then continue with ffmpeg from an intermediate PNG.
-		if { [ "$src_ext" = "heic" ] || [ "$src_ext" = "heif" ]; } && command -v heif-convert >/dev/null 2>&1; then
-			local heif_png="${tmp}.heif.png"
-			local heif_log="${tmp}.heif.log"
-			if heif-convert "$src" "$heif_png" >/dev/null 2>"$heif_log"; then
-				local cmd_fallback=(ffmpeg -y -i "$heif_png")
-				cmd_fallback+=("${METADATA_ARGS[@]}")
-				if [ -n "$scale_filter" ]; then
-					cmd_fallback+=(-vf "$scale_filter")
-				fi
-				case "$tgt_lc" in
-				webp)
-					cmd_fallback+=(-q:v "$QUALITY")
-					;;
-				png)
-					cmd_fallback+=(-compression_level 9)
-					;;
-				jpg | jpeg)
-					cmd_fallback+=(-q:v "$QUALITY")
-					;;
-				esac
-				cmd_fallback+=("$tmp")
-				if ! "${cmd_fallback[@]}" >/dev/null 2>"$log_file"; then
-					echo "  ⚠️ ffmpeg fallback failed for $src -> $dst; output: $(sed -n '1,120p' "$log_file" 2>/dev/null || true)" >&2
-					rm -f "$heif_png" "$heif_log" "$log_file" 2>/dev/null || true
-					return 1
-				fi
-				rm -f "$heif_png" "$heif_log" 2>/dev/null || true
-			else
-				echo "  ⚠️ Unsupported HEIC/HEIF variant, skipping $src; ffmpeg: $(sed -n '1,40p' "$log_file" 2>/dev/null || true) ; heif-convert: $(sed -n '1,40p' "$heif_log" 2>/dev/null || true)" >&2
-				rm -f "$heif_png" "$heif_log" "$log_file" 2>/dev/null || true
-				# Return 3 means source format couldn't be decoded by available tools.
-				return 3
-			fi
-		else
-			echo "  ⚠️ ffmpeg failed for $src -> $dst; output: $(sed -n '1,120p' "$log_file" 2>/dev/null || true)" >&2
+		if [ "$src_ext" = "heic" ] || [ "$src_ext" = "heif" ]; then
+			echo "  ⚠️ Unsupported HEIC/HEIF variant, skipping $src; ffmpeg: $(sed -n '1,80p' "$log_file" 2>/dev/null || true)" >&2
 			rm -f "$log_file" 2>/dev/null || true
-			return 1
+			# Return 3 means source format couldn't be decoded by ffmpeg.
+			return 3
 		fi
+		echo "  ⚠️ ffmpeg failed for $src -> $dst; output: $(sed -n '1,120p' "$log_file" 2>/dev/null || true)" >&2
+		rm -f "$log_file" 2>/dev/null || true
+		return 1
 	fi
 	rm -f "$log_file" 2>/dev/null || true
 
@@ -343,6 +328,7 @@ process_file() {
 			# If new_file differs from the original file path, remove the original
 			if [ "$new_file" != "$f" ]; then
 				rm -f "$f" || true
+				CHANGED_FILES+=("$f")
 			fi
 			CHANGED_FILES+=("$new_file")
 			echo "  ✅ Processed $f -> $new_file; saved $((orig_size - new_size)) bytes"
@@ -634,7 +620,7 @@ fi
 
 if [ "${OPTIMIZED_COUNT:-0}" -gt 0 ]; then
 	echo "Committing changes..."
-	for f in "${CHANGED_FILES[@]}"; do git add "$f"; done
+	for f in "${CHANGED_FILES[@]}"; do git add -A -- "$f"; done
 	[ "$SKIP_CI" = "true" ] && COMMIT_MESSAGE="$COMMIT_MESSAGE [skip ci]"
 	git commit -m "$COMMIT_MESSAGE" || true
 fi

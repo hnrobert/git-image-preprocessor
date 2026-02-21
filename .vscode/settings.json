@@ -1,5 +1,6 @@
 {
     "cSpell.words": [
+        "analyzeduration",
         "basenames",
         "buildx",
         "color",
@@ -7,6 +8,7 @@
         "elif",
         "exiftool",
         "ffprobe",
+        "gsub",
         "jpegoptim",
         "jrottenberg",
         "libavif",
@@ -21,6 +23,7 @@
         "optipng",
         "PNGQ",
         "pngquant",
+        "probesize",
         "qlist",
         "rargs",
         "vcodec",

@@ -12,7 +12,6 @@ RUN apt-get update && apt-get install -y \
     git \
     bc \
     file \
-    libheif-examples \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy entrypoint script
