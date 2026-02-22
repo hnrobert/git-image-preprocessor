@@ -190,9 +190,13 @@ convert_image() {
 		decoded_tmp="${tmp}.decoded.png"
 		local decode_log="${decoded_tmp}.log"
 		if ! heif-convert "$src" "$decoded_tmp" >/dev/null 2>"$decode_log"; then
-			echo "  ⚠️ Unsupported HEIC/HEIF variant, skipping $src; heif-convert: $(sed -n '1,80p' "$decode_log" 2>/dev/null || true)" >&2
-			rm -f "$decode_log" "$decoded_tmp" 2>/dev/null || true
-			return 3
+			if ! heif-convert --skip-exif-offset "$src" "$decoded_tmp" >/dev/null 2>"$decode_log"; then
+				if ! heif-convert -d libde265 --skip-exif-offset "$src" "$decoded_tmp" >/dev/null 2>"$decode_log"; then
+					echo "  ⚠️ Unsupported HEIC/HEIF variant, skipping $src; heif-convert: $(sed -n '1,80p' "$decode_log" 2>/dev/null || true)" >&2
+					rm -f "$decode_log" "$decoded_tmp" 2>/dev/null || true
+					return 3
+				fi
+			fi
 		fi
 		rm -f "$decode_log" 2>/dev/null || true
 		ff_input="$decoded_tmp"
